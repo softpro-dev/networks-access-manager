@@ -48,6 +48,26 @@ async function main() {
   }
   await prisma.$connect();
   await app.listen({ host: config.host, port: config.port });
+  printBanner(config.port, Boolean(https), process.env.WEB_PUBLIC_URL ?? webUrlFromPort());
+}
+
+function webUrlFromPort(): string {
+  return `http://localhost:${process.env.WEB_PORT ?? '3001'}`;
+}
+
+// Plain stdout (not the JSON logger) so the URLs are easy to spot and click in the terminal.
+function printBanner(port: number, tls: boolean, webUrl: string) {
+  const api = `${tls ? 'https' : 'http'}://localhost:${port}`;
+  const lines = [
+    'Network Access Manager is running',
+    '',
+    `  Admin console : ${webUrl}`,
+    `  API           : ${api}/api`,
+    `  Health check  : ${api}/api/health`,
+  ];
+  const width = Math.max(...lines.map((l) => l.length)) + 2;
+  const bar = '─'.repeat(width);
+  console.log(`\n┌${bar}┐\n${lines.map((l) => `│ ${l.padEnd(width - 1)}│`).join('\n')}\n└${bar}┘\n`);
 }
 
 main().catch((err) => {
