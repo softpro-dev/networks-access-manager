@@ -1,0 +1,302 @@
+// Prisma schema for server-network (MySQL 8+)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  ORGANIZATION_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum DeviceStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  REVOKED
+}
+
+enum PolicyVersionStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum AssignmentScope {
+  ORGANIZATION
+  GROUP
+  DEVICE
+}
+
+enum DevicePolicyState {
+  DOWNLOADED
+  VALIDATION_FAILED
+  APPLYING
+  APPLIED
+  FAILED
+  ROLLED_BACK
+}
+
+enum ActorType {
+  USER
+  DEVICE
+  SYSTEM
+}
+
+model Organization {
+  id                    String             @id @default(cuid())
+  code                  String             @unique @db.VarChar(32)
+  name                  String             @db.VarChar(200)
+  status                OrganizationStatus @default(ACTIVE)
+  /// sha256 hex of the per-organization registration token (null = use global AGENT_REGISTRATION_TOKEN)
+  registrationTokenHash String?            @db.Char(64)
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  users       User[]
+  devices     Device[]
+  credentials DeviceCredential[]
+  groups      DeviceGroup[]
+  policies    Policy[]
+  assignments PolicyAssignment[]
+  auditLogs   AuditLog[]
+}
+
+model User {
+  id                  String        @id @default(cuid())
+  email               String        @unique @db.VarChar(254)
+  name                String?       @db.VarChar(200)
+  passwordHash        String        @db.VarChar(255)
+  role                UserRole
+  organizationId      String?
+  organization        Organization? @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  status              UserStatus    @default(ACTIVE)
+  failedLoginAttempts Int           @default(0)
+  lockedUntil         DateTime?
+  lastLoginAt         DateTime?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  sessions           Session[]
+  approvedDevices    Device[]           @relation("DeviceApprovedBy")
+  publishedVersions  PolicyVersion[]    @relation("VersionPublishedBy")
+  createdAssignments PolicyAssignment[] @relation("AssignmentCreatedBy")
+
+  @@index([organizationId])
+}
+
+model Session {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now())
+  expiresAt DateTime
+  revokedAt DateTime?
+  ip        String?   @db.VarChar(45)
+  userAgent String?   @db.VarChar(255)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Device {
+  id                   String       @id @default(cuid())
+  organizationId       String
+  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  deviceUuid           String       @unique @db.Char(36)
+  displayName          String?      @db.VarChar(200)
+  hostname             String       @db.VarChar(255)
+  windowsVersion       String       @db.VarChar(200)
+  agentVersion         String       @db.VarChar(50)
+  interfaces           Json
+  status               DeviceStatus @default(PENDING)
+  /// sha256 hex of the agent's enrollment secret; nulled once the credential is claimed or on re-enroll
+  enrollmentSecretHash String?      @db.Char(64)
+  approvedAt           DateTime?
+  approvedById         String?
+  approvedBy           User?        @relation("DeviceApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  lastHeartbeatAt      DateTime?
+  /// IP reported by the agent in the heartbeat body
+  lastIp               String?      @db.VarChar(45)
+  /// source IP of the last heartbeat request as seen by the server
+  lastRequestIp        String?      @db.VarChar(45)
+  reportedStatus       String?      @db.VarChar(32)
+  currentPolicyId      String?
+  currentPolicy        Policy?      @relation("DeviceCurrentPolicy", fields: [currentPolicyId], references: [id], onDelete: SetNull)
+  currentPolicyVersion Int?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  credentials  DeviceCredential[]
+  memberships  DeviceGroupMember[]
+  assignments  PolicyAssignment[]
+  policyStatus DevicePolicyStatus?
+
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
+}
+
+model DeviceCredential {
+  /// credential_id as used in the token `ndc_<credential_id>.<secret>`
+  id             String       @id @default(cuid())
+  deviceId       String
+  device         Device       @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  /// sha256 hex of the secret part; null until claimed (raw secret is generated at claim time)
+  secretHash     String?      @db.Char(64)
+  createdAt      DateTime     @default(now())
+  issuedAt       DateTime?
+  expiresAt      DateTime?
+  revokedAt      DateTime?
+  lastUsedAt     DateTime?
+  claimedAt      DateTime?
+
+  @@index([deviceId])
+  @@index([organizationId])
+}
+
+model DeviceGroup {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  name           String       @db.VarChar(200)
+  description    String?      @db.VarChar(1000)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  members     DeviceGroupMember[]
+  assignments PolicyAssignment[]
+
+  @@unique([organizationId, name])
+}
+
+model DeviceGroupMember {
+  groupId   String
+  group     DeviceGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  deviceId  String
+  device    Device      @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  createdAt DateTime    @default(now())
+
+  @@id([groupId, deviceId])
+  @@index([deviceId])
+}
+
+model Policy {
+  id              String         @id @default(cuid())
+  organizationId  String
+  organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  /// wire policy_id, e.g. POL-001 (unique per organization)
+  code            String         @db.VarChar(32)
+  name            String         @db.VarChar(200)
+  description     String?        @db.VarChar(2000)
+  isActive        Boolean        @default(true)
+  activeVersionId String?        @unique
+  activeVersion   PolicyVersion? @relation("PolicyActiveVersion", fields: [activeVersionId], references: [id], onDelete: Restrict)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  versions     PolicyVersion[]      @relation("PolicyVersions")
+  assignments  PolicyAssignment[]
+  devices      Device[]             @relation("DeviceCurrentPolicy")
+  deviceStatus DevicePolicyStatus[]
+
+  @@unique([organizationId, code])
+}
+
+model PolicyVersion {
+  id            String              @id @default(cuid())
+  policyId      String
+  policy        Policy              @relation("PolicyVersions", fields: [policyId], references: [id], onDelete: Restrict)
+  version       Int
+  status        PolicyVersionStatus @default(DRAFT)
+  /// Always the full, default-filled, normalized 9-field content object
+  content       Json
+  contentSha256 String?             @db.Char(64)
+  publishedAt   DateTime?
+  publishedById String?
+  publishedBy   User?               @relation("VersionPublishedBy", fields: [publishedById], references: [id], onDelete: SetNull)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  activeFor    Policy?              @relation("PolicyActiveVersion")
+  deviceStatus DevicePolicyStatus[]
+
+  @@unique([policyId, version])
+}
+
+model PolicyAssignment {
+  id             String          @id @default(cuid())
+  policyId       String
+  policy         Policy          @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  scope          AssignmentScope
+  targetGroupId  String?
+  targetGroup    DeviceGroup?    @relation(fields: [targetGroupId], references: [id], onDelete: Cascade)
+  targetDeviceId String?
+  targetDevice   Device?         @relation(fields: [targetDeviceId], references: [id], onDelete: Cascade)
+  priority       Int             @default(0)
+  createdById    String?
+  createdBy      User?           @relation("AssignmentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt      DateTime        @default(now())
+
+  @@index([organizationId, scope])
+  @@index([policyId])
+  @@index([targetGroupId])
+  @@index([targetDeviceId])
+}
+
+model DevicePolicyStatus {
+  id               String            @id @default(cuid())
+  deviceId         String            @unique
+  device           Device            @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  /// wire policy_id as reported by the agent
+  policyCode       String            @db.VarChar(32)
+  policyId         String?
+  policy           Policy?           @relation(fields: [policyId], references: [id], onDelete: SetNull)
+  policyVersionId  String?
+  policyVersion    PolicyVersion?    @relation(fields: [policyVersionId], references: [id], onDelete: SetNull)
+  version          Int
+  status           DevicePolicyState
+  errorCode        String?           @db.VarChar(64)
+  message          String?           @db.VarChar(1000)
+  activePolicyCode String?           @db.VarChar(32)
+  activeVersion    Int?
+  updatedAt        DateTime          @updatedAt
+
+  @@index([policyId])
+}
+
+model AuditLog {
+  id             String        @id @default(cuid())
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  actorType      ActorType
+  actorId        String?       @db.VarChar(64)
+  action         String        @db.VarChar(64)
+  targetType     String?       @db.VarChar(64)
+  targetId       String?       @db.VarChar(64)
+  metadata       Json?
+  ip             String?       @db.VarChar(45)
+  createdAt      DateTime      @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([action])
+  @@index([createdAt])
+}
