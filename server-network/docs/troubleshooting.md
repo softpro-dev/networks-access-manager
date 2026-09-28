@@ -16,3 +16,15 @@
 | Admin token suddenly 401 | Token expired (15 min default), logged out, user/org disabled, or password changed. Log in again. |
 | 500 `Policy integrity check failed` | Stored content no longer hashes to the published sha256 (manual DB edit). Publish a new version. |
 | Wrong client IPs in audit | Configure `TRUST_PROXY` to the reverse proxy address. |
+
+## Changed `SEED_SUPER_ADMIN_PASSWORD` in `.env` but login still fails
+
+The seed password is used only when the seeder *creates* a user; it never overwrites an existing
+account. Reset the stored password instead:
+
+```bash
+npm run admin:reset-password -- <email>
+```
+
+The password comes from `RESET_PASSWORD`, else `SEED_SUPER_ADMIN_PASSWORD` (when `<email>` is the
+seed super admin), else a hidden prompt. It also clears lockout and revokes the user's sessions.

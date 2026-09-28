@@ -26,7 +26,8 @@
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
-    "test:vector": "tsx scripts/print-test-vector.ts"
+    "test:vector": "tsx scripts/print-test-vector.ts",
+    "suadmin__reset_password": "tsx scripts/reset-password.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",

@@ -8,6 +8,13 @@ import { randomBytes } from 'node:crypto';
 import { hashPassword, MIN_PASSWORD_LENGTH } from '../src/services/password.js';
 import { validatePolicyContent } from '../src/domain/policyContent.js';
 
+// Run via tsx, which (unlike the Prisma CLI) does not load .env; real env vars still take precedence.
+try {
+  process.loadEnvFile('.env');
+} catch (e) {
+  if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+}
+
 const prisma = new PrismaClient();
 
 const ORGS = [
