@@ -3,7 +3,17 @@ import { loadConfig, ConfigError } from './config/index.js';
 import { createPrismaClient } from './database/prisma.js';
 import { buildApp } from './app.js';
 
+function loadDotEnv() {
+  // Real environment variables take precedence; .env is optional (absent in production).
+  try {
+    process.loadEnvFile('.env');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+  }
+}
+
 async function main() {
+  loadDotEnv();
   let config;
   try {
     config = loadConfig();

@@ -1,0 +1,10 @@
+[project]
+name = "organization-network-agent"
+version = "1.0.0"
+description = "Organization Network Management Agent (Windows service control plane)"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "tests"]
+testpaths = ["tests"]
+addopts = "-q"
