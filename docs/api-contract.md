@@ -154,7 +154,7 @@ Response `200`:
 {
   "server_time": "2026-09-28T10:00:00.000Z",
   "heartbeat_interval_seconds": 60,
-  "policy": { "policy_id": "POL-001", "version": 7, "etag": "\"POL-001:7:9f86d081\"" }
+  "policy": { "policy_id": "POL-001", "version": 7, "etag": "\"POL-001:7:0587ffd8\"" }
 }
 ```
 
@@ -163,7 +163,7 @@ Response `200`:
 ### `GET /api/agent/policy/version`
 
 ```json
-{ "policy_id": "POL-001", "version": 7, "etag": "\"POL-001:7:9f86d081\"" }
+{ "policy_id": "POL-001", "version": 7, "etag": "\"POL-001:7:0587ffd8\"" }
 ```
 or `{ "policy_id": null, "version": 0, "etag": null }` when nothing is assigned.
 
@@ -177,7 +177,7 @@ Optional header `If-None-Match: <etag>`.
 
 * `304 Not Modified` (empty body) if the etag matches.
 * `404 NO_POLICY_ASSIGNED` if nothing applies.
-* `200` with header `ETag: "POL-001:7:9f86d081"` and body = **Policy Document** (§4).
+* `200` with header `ETag: "POL-001:7:0587ffd8"` and body = **Policy Document** (§4).
 
 ETag format: `"<policy_id>:<version>:<first 8 hex of content_sha256>"` (quotes included).
 
@@ -227,7 +227,7 @@ version)` is not the one currently assigned to the device.
   "device_uuid": "3f0c7a52-9a6e-4f5b-8a2c-2d9e1f4b7c10",
   "assignment_scope": "ORGANIZATION",
   "published_at": "2026-09-28T09:00:00.000Z",
-  "content_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+  "content_sha256": "0587ffd890ccf836680f39fafb4740e3bf94185e7b8d8f26c6502560e14775cf",
   "content": {
     "enabled": true,
     "default_action": "allow",
