@@ -1,7 +1,10 @@
 # Architecture
 
 ```
- Admin (browser/CLI) ──HTTPS──▶ ┌──────────── server-network ────────────┐ ◀──HTTPS── Windows agents
+ Admin browser ──▶ web/ (Next.js, :3001) ── rewrites /api/* ──┐
+ Admin CLI ────────────────────────────────HTTPS──────────────┤
+                                                              ▼
+                                ┌──────────── server-network ────────────┐ ◀──HTTPS── Windows agents
    JWT (15 min) + Session row   │ Fastify                                │   ndc_ device credential
                                 │  ├─ /api/auth, /api/organizations, ... │
                                 │  ├─ /api/agent/*  (wire contract)      │
@@ -11,6 +14,11 @@
                                 └────────────────────────────────────────┘
 ```
 
+* **Admin console** (`web/`): Next.js App Router, all pages are client components using TanStack Query
+  against same-origin `/api/*`, which Next proxies to Fastify (`API_URL`). No business logic, API routes
+  or server actions live in Next; RBAC and tenant isolation are enforced only (and always) by the API.
+  `middleware.ts` sets a per-request nonce CSP; `next.config.mjs` adds the static security headers.
+  Fastify serves only `/api/*` plus a tiny HTML pointer at `/` (`WEB_PUBLIC_URL`).
 * **Pure domain layer** (`src/domain/`): domain-pattern normalization/validation/matching and `decide()`,
   canonical JSON + sha256, ETag, policy content schema, assignment resolution, RBAC scoping, token
   format. No I/O; fully unit-tested, including every contract §5 example.

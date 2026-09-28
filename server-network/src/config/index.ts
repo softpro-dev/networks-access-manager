@@ -36,6 +36,11 @@ const envSchema = z
     LOGIN_LOCKOUT_THRESHOLD: z.coerce.number().int().min(0).max(1000).default(10),
     LOGIN_LOCKOUT_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
     RATE_LIMIT_ENABLED: boolish.default(true),
+    WEB_PUBLIC_URL: z
+      .string()
+      .url()
+      .refine((v) => /^https?:\/\//i.test(v), 'Must be an http(s) URL')
+      .default('http://localhost:3001'),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === 'production') {
@@ -72,6 +77,8 @@ export interface AppConfig {
   loginLockoutThreshold: number;
   loginLockoutMinutes: number;
   rateLimitEnabled: boolean;
+  /** Public URL of the Next.js admin console (linked from GET /). */
+  webPublicUrl: string;
 }
 
 function parseTrustProxy(raw: string): TrustProxy {
@@ -110,5 +117,6 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     loginLockoutThreshold: e.LOGIN_LOCKOUT_THRESHOLD,
     loginLockoutMinutes: e.LOGIN_LOCKOUT_MINUTES,
     rateLimitEnabled: e.RATE_LIMIT_ENABLED,
+    webPublicUrl: e.WEB_PUBLIC_URL,
   };
 }

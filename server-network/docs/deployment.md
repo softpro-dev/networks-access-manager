@@ -11,8 +11,12 @@ set `TLS_CERT_PATH`/`TLS_KEY_PATH` for native HTTPS (TLS ≥ 1.2). TLS is mandat
 ```bash
 npm ci && npx prisma generate && npm run build
 NODE_ENV=production npx prisma migrate deploy
-node dist/src/server.js
+node dist/src/server.js                     # API
+npx next start web --port 3001              # admin console (or `npm start` for both)
 ```
+Set `API_URL` (e.g. `http://127.0.0.1:3000`) before `npm run build:web`: the console's `/api` proxy
+target is fixed at build time. Set `WEB_PUBLIC_URL` on the API to the console's public URL.
+Route the console host (or `/`) to port 3001 and `/api/` to 3000 (or let the console proxy `/api`).
 Production requires `JWT_SECRET` ≥ 32 chars and a non-trivial `AGENT_REGISTRATION_TOKEN`
 (≥ 16 chars, or empty to require per-organization tokens); startup fails otherwise.
 

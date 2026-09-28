@@ -50,6 +50,25 @@ applied (ack) and policy application failures reported by agents.
 Not collected: browsing history, page content, keystrokes, cookies, passwords. Heartbeats carry only
 the five contract fields (extra keys are discarded).
 
+## Admin console (web/)
+
+* CSP (set per request in `web/middleware.ts`): `default-src 'self'; script-src 'self' 'nonce-…'
+  'strict-dynamic'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';
+  connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`.
+  Next's inline bootstrap scripts are authorized by the nonce, so scripts need no `'unsafe-inline'`.
+  `style-src 'unsafe-inline'` is required because Next/React inject style tags/attributes; no user
+  content is rendered as HTML. `next dev` additionally allows `'unsafe-eval'` and `ws:` for hot reload.
+  Also sent: `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`,
+  `Cross-Origin-Opener-Policy: same-origin`, a restrictive `Permissions-Policy`. No CDN/external assets.
+* Proxied `/api/*` responses keep the API's own strict headers (`default-src 'none'`).
+* Access token: memory + `sessionStorage` only (not `localStorage`), Bearer header, no cookies (so no
+  CSRF surface). The `?next=` redirect after sign-in accepts same-origin paths only.
+* Client IPs: requests proxied by Next reach Fastify from 127.0.0.1. Next *keeps* a client-supplied
+  `X-Forwarded-For`, so do **not** add loopback to `TRUST_PROXY` when Next is directly exposed (clients
+  could spoof their IP to dodge login rate limits). Consequence with the default `TRUST_PROXY=false`:
+  console logins share one per-IP bucket (20/min) while the per-email limit (5/min) still applies.
+  If a TLS reverse proxy that overwrites `X-Forwarded-For` sits in front of Next, trust that chain.
+
 ## Residual risks
 
 * Anyone holding a valid registration token can create PENDING devices (rate-limited, admin approval needed).
