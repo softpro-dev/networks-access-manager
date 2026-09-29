@@ -15,7 +15,16 @@ cd os-apps
 ``` 
  
 
-3. Output in `dist/`: `SoftProIt.network.conducted` (service) 
-and `SoftProIt.network.admin` (desktop app).
-4. Set `.env`: `ADMIN_SERVER`, `ACCESS_TOKE` (org → Generate access token), `CACHE_EXPIRATION_TIME_IN_MINUTE`.
-5. Windows installer: compile `installer/OrganizationNetworkAgent.iss` with Inno Setup.
+## Output (`dist/`)
+- `SoftProIt.network.conducted` — service
+- `SoftProIt.network.admin` — desktop app
+
+## Set `.env`
+```env
+ADMIN_SERVER=http://localhost:3001
+ACCESS_TOKE=copy_from_organization_list   # org → Generate access token
+CACHE_EXPIRATION_TIME_IN_MINUTE=5
+```
+
+## Windows installer
+Compile `installer/OrganizationNetworkAgent.iss` with Inno Setup.
