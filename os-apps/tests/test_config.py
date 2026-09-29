@@ -117,4 +117,4 @@ def test_macos_default_root(monkeypatch):
     monkeypatch.setattr("nam_agent.config.paths.IS_WINDOWS", False)
     monkeypatch.setattr("nam_agent.config.paths.IS_MACOS", True)
     root = default_root({})
-    assert str(root) == "/Library/Application Support/OrganizationNetworkAgent"
+    assert root.as_posix() == "/Library/Application Support/OrganizationNetworkAgent"
