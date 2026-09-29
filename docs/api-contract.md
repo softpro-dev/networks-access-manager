@@ -1,7 +1,7 @@
 # Agent ⇄ Server Wire Contract
 
 This is the single source of truth for everything that crosses the wire between
-`server-network` (policy authority) and `win32-apps` (Windows agent). The two
+`server-network` (policy authority) and `os-apps` (Windows agent). The two
 applications share **no code**; each implements this contract independently.
 
 All JSON uses `snake_case`. All timestamps are ISO-8601 UTC strings.

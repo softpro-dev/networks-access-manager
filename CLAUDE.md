@@ -9,12 +9,12 @@ Two **independent** applications that share no code and communicate only over th
 | Dir | What | Stack |
 |---|---|---|
 | `server-network/` | Central policy authority + admin console | Node 22, TypeScript (ESM, strict), Fastify 5, Zod, Prisma 6 / MySQL 8, argon2id, JWT (jose), Vitest; console in `web/` is Next.js 15 / React 19 / TanStack Query |
-| `win32-apps/` | Windows Service agent (`OrganizationNetworkAgent.exe`) | Python 3.11+ (dev uses 3.12), pywin32, httpx, pydantic, SQLite, PyInstaller, Inno Setup |
+| `os-apps/` | Windows Service agent (`OrganizationNetworkAgent.exe`) | Python 3.11+ (dev uses 3.12), pywin32, httpx, pydantic, SQLite, PyInstaller, Inno Setup |
 | `docs/api-contract.md` | **The wire contract** between them | — |
 
 `app-prompt.md` is the original master spec for the whole system (roles, multi-tenant rules, requirements). Each app also has its own `docs/` (architecture, security, api, deployment, testing, troubleshooting; agent adds `windows-enforcement.md`).
 
-**Contract rule:** any change to agent endpoints, policy document shape, canonical JSON/sha256/ETag, or domain-pattern semantics (contract §5) must be made identically on both sides and in `docs/api-contract.md`. Cross-check hashes with `npm run test:vector` (server) against `win32-apps/tests/test_canonical.py`. Known vectors: contract §4 example → `0587ffd8…75cf`; all-defaults `{}` → `b45d676b…93b9`.
+**Contract rule:** any change to agent endpoints, policy document shape, canonical JSON/sha256/ETag, or domain-pattern semantics (contract §5) must be made identically on both sides and in `docs/api-contract.md`. Cross-check hashes with `npm run test:vector` (server) against `os-apps/tests/test_canonical.py`. Known vectors: contract §4 example → `0587ffd8…75cf`; all-defaults `{}` → `b45d676b…93b9`.
 
 ## server-network commands
 
@@ -54,9 +54,9 @@ npm run suadmin__reset_password   # scripts/reset-password.ts
 - `web/` is a pure API client: all pages are client components; Next only proxies `/api/*` to Fastify. **No Next API routes or server actions** — RBAC lives only in the API. Access token kept in memory + `sessionStorage` (never `localStorage`). `middleware.ts` sets nonce CSP.
 - The server never processes or filters browser traffic; agents enforce locally.
 
-## win32-apps commands
+## os-apps commands
 
-Run from `win32-apps/` (macOS/Linux dev works):
+Run from `os-apps/` (macOS/Linux dev works):
 
 ```bash
 python3.12 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
@@ -71,7 +71,7 @@ export ORGANIZATION_ID=INST-001 API_BASE_URL=https://localhost:3000/api DEVICE_R
 
 Build `.exe` only on Windows x64 (PyInstaller can't cross-compile): `powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Installer` (runs tests first). CLI subcommands: `configure`, `install`/`uninstall`, `start`/`stop`, `status`, `run`; no args = SCM service host.
 
-## win32-apps architecture
+## os-apps architecture
 
 - Code in `src/nam_agent/` (entry `src/main.py`). **Windows-only imports (`win32*`, `servicemanager`, `winreg`, `ctypes.windll`) must stay lazy** (inside functions or Windows-only modules) so everything else and the test suite run on macOS/Linux.
 - **Control plane only.** `enforcement/` defines `EnforcementBackend`; the only real backend, `NotImplementedBackend`, makes no network changes, so an enabled policy reports `FAILED / policy_apply_failed` and heartbeat `ENFORCEMENT_ERROR`. This is intentional — see `docs/windows-enforcement.md`.

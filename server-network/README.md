@@ -1,6 +1,6 @@
 # server-network
 
-Central Network Access Management server: the policy authority for the `win32-apps` Windows agent.
+Central Network Access Management server: the policy authority for the `os-apps` Windows agent.
 It manages organizations, administrators, device enrollment/credentials, versioned network policies,
 assignments, heartbeats and audit logs. It never sees or filters browser traffic — agents enforce locally.
 

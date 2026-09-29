@@ -18,7 +18,7 @@ Build a complete organization-managed network policy management system consistin
 | # | Application | Purpose | Absolute path |
 |---|-------------|---------|---------------|
 | 1 | `server-network` | Central Network Access Management server (Node.js / TypeScript) — the policy authority | `/Users/mamun/apps/network-access-manager/server-network` |
-| 2 | `win32-apps` | Windows Client Agent (Python) — packaged as a `.exe` running as a Windows Service, performs local enforcement | `/Users/mamun/apps/network-access-manager/win32-apps` |
+| 2 | `os-apps` | Windows Client Agent (Python) — packaged as a `.exe` running as a Windows Service, performs local enforcement | `/Users/mamun/apps/network-access-manager/os-apps` |
 
 Workspace root: `/Users/mamun/apps/network-access-manager/`
 
@@ -26,7 +26,7 @@ Workspace root: `/Users/mamun/apps/network-access-manager/`
 network-access-manager/
 │
 ├── server-network/     # Application 1 — Node.js management server
-├── win32-apps/         # Application 2 — Python Windows Service agent (.exe)
+├── os-apps/         # Application 2 — Python Windows Service agent (.exe)
 └── docs/               # Shared, cross-application documentation
 ```
 
@@ -67,7 +67,7 @@ The server manages:
 - Policy synchronization
 - Audit logs
 
-> The server **MUST NOT** process individual browser requests. The Windows Agent (`win32-apps`) performs local enforcement.
+> The server **MUST NOT** process individual browser requests. The Windows Agent (`os-apps`) performs local enforcement.
 
 ## Directory Layout
 
@@ -328,18 +328,18 @@ Never hardcode secrets.
 <!-- ============================================================ -->
 <!--            END OF APPLICATION 1 — server-network             -->
 <!-- ============================================================ -->
-<!--             START OF APPLICATION 2 — win32-apps              -->
+<!--             START OF APPLICATION 2 — os-apps              -->
 <!-- ============================================================ -->
 
 ---
 ---
 ---
 
-# APPLICATION 2 — `win32-apps`
+# APPLICATION 2 — `os-apps`
 
-**Path:** `/Users/mamun/apps/network-access-manager/win32-apps`
+**Path:** `/Users/mamun/apps/network-access-manager/os-apps`
 
-The `win32-apps` application contains the Python source code for the Windows Client Agent. It is built into a Windows executable (`OrganizationNetworkAgent.exe`) and runs as a **real Windows Service** on organization-owned Windows 10/11 computers.
+The `os-apps` application contains the Python source code for the Windows Client Agent. It is built into a Windows executable (`OrganizationNetworkAgent.exe`) and runs as a **real Windows Service** on organization-owned Windows 10/11 computers.
 
 | Property | Value |
 |----------|-------|
@@ -364,7 +364,7 @@ Additional dependencies only when justified.
 ## Directory Layout
 
 ```text
-win32-apps/
+os-apps/
 ├── src/
 ├── tests/
 ├── installer/
@@ -410,7 +410,7 @@ Record for each interface: name, MAC address, IPv4, IPv6, interface type.
 
 ## Configuration
 
-Create `win32-apps/.env.example`:
+Create `os-apps/.env.example`:
 
 ```env
 ORGANIZATION_ID=INST-001
@@ -428,11 +428,11 @@ Do **NOT** hardcode the management server.
 
 ```text
 First startup:
-  win32-apps Agent → POST /api/agent/register → server-network → PENDING
+  os-apps Agent → POST /api/agent/register → server-network → PENDING
   Agent waits for administrator approval
 
 After approval:
-  server-network → Device Credential → win32-apps Agent
+  server-network → Device Credential → os-apps Agent
 ```
 
 - Store the credential securely (e.g., Windows DPAPI, machine scope).
@@ -511,7 +511,7 @@ Do **NOT** use Startup folder entries, visible terminal windows, hidden scripts,
 
 ## Windows Network Enforcement
 
-This is the most technically important part of `win32-apps`.
+This is the most technically important part of `os-apps`.
 
 - The Python service is the **CONTROL PLANE**.
 - The Windows networking component is the **ENFORCEMENT PLANE**.
@@ -528,7 +528,7 @@ Do not assume Python alone can provide complete low-level Windows network filter
 
 Select the safest practical architecture.
 
-- If a native C/C++ component is required, place it under `win32-apps/native/`.
+- If a native C/C++ component is required, place it under `os-apps/native/`.
 - If a kernel-mode WFP callout driver is genuinely required, document the Windows SDK / WDK / Visual Studio / driver-signing requirements and create all safe, buildable components possible.
 - Do **NOT** create fake enforcement.
 
@@ -636,7 +636,7 @@ The installer must:
 - Register the Windows Service with automatic startup
 - Start the service and verify its status
 
-Provide build scripts under `win32-apps/scripts/` (e.g., `build.ps1`) and the Inno Setup script under `win32-apps/installer/`. Document that the `.exe` must be built on Windows (PyInstaller does not cross-compile).
+Provide build scripts under `os-apps/scripts/` (e.g., `build.ps1`) and the Inno Setup script under `os-apps/installer/`. Document that the `.exe` must be built on Windows (PyInstaller does not cross-compile).
 
 ## Organization Configuration
 
@@ -680,7 +680,7 @@ Create automated tests for both applications.
 - Revoked devices
 - Invalid requests
 
-**`win32-apps` tests**
+**`os-apps` tests**
 
 - UUID persistence
 - Configuration
@@ -691,7 +691,7 @@ Create automated tests for both applications.
 - Policy validation and rollback
 - Offline behavior
 
-**Windows integration test plan** (document in `win32-apps/docs/testing.md`):
+**Windows integration test plan** (document in `os-apps/docs/testing.md`):
 
 - Installation, device registration, administrator approval, device naming
 - Policy assignment, synchronization, cached policy
@@ -711,7 +711,7 @@ Each application gets its own `README.md` and `docs/`:
 - `docs/security.md`
 - `docs/api.md`
 - `docs/deployment.md`
-- `docs/windows-enforcement.md` (`win32-apps`)
+- `docs/windows-enforcement.md` (`os-apps`)
 - `docs/testing.md`
 - `docs/troubleshooting.md`
 
@@ -742,7 +742,7 @@ Explain:
 │   ├── .env.example
 │   └── README.md
 │
-├── win32-apps/
+├── os-apps/
 │   ├── src/
 │   ├── tests/
 │   ├── native/
@@ -779,24 +779,24 @@ Explain:
 
 | Phase | Work |
 |-------|------|
-| 1 | Create `server-network/` and `win32-apps/` and establish both project foundations |
+| 1 | Create `server-network/` and `os-apps/` and establish both project foundations |
 | 2 | `server-network`: database and server foundation |
 | 3 | `server-network`: authentication and RBAC |
 | 4 | `server-network`: organizations and multi-tenancy |
 | 5 | `server-network`: device registration and approval |
 | 6 | `server-network`: policy management and versioning |
 | 7 | `server-network`: agent APIs |
-| 8 | `win32-apps`: agent foundation |
-| 9 | `win32-apps`: Windows Service |
-| 10 | `win32-apps`: device identity and network discovery |
-| 11 | `win32-apps`: secure server communication |
-| 12 | `win32-apps`: heartbeat and policy synchronization |
-| 13 | `win32-apps`: SQLite policy cache |
-| 14 | `win32-apps`: policy validation and rollback |
-| 15 | `win32-apps`: Windows-native network enforcement |
-| 16 | `win32-apps`: configuration utility |
-| 17 | `win32-apps`: PyInstaller `.exe` build |
-| 18 | `win32-apps`: Inno Setup installer |
+| 8 | `os-apps`: agent foundation |
+| 9 | `os-apps`: Windows Service |
+| 10 | `os-apps`: device identity and network discovery |
+| 11 | `os-apps`: secure server communication |
+| 12 | `os-apps`: heartbeat and policy synchronization |
+| 13 | `os-apps`: SQLite policy cache |
+| 14 | `os-apps`: policy validation and rollback |
+| 15 | `os-apps`: Windows-native network enforcement |
+| 16 | `os-apps`: configuration utility |
+| 17 | `os-apps`: PyInstaller `.exe` build |
+| 18 | `os-apps`: Inno Setup installer |
 | 19 | Automated tests (both apps) |
 | 20 | Complete documentation |
 
@@ -807,7 +807,7 @@ Explain:
 The final result must be **TWO real applications**:
 
 - **`server-network`** (`/Users/mamun/apps/network-access-manager/server-network`) — central Node.js network access management server and policy authority.
-- **`win32-apps`** (`/Users/mamun/apps/network-access-manager/win32-apps`) — Python Windows Client Agent, built as `OrganizationNetworkAgent.exe`, running as a Windows Service and performing local policy enforcement.
+- **`os-apps`** (`/Users/mamun/apps/network-access-manager/os-apps`) — Python Windows Client Agent, built as `OrganizationNetworkAgent.exe`, running as a Windows Service and performing local policy enforcement.
 
 Principles:
 

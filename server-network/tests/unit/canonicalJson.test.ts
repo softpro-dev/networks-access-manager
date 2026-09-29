@@ -3,7 +3,7 @@ import { canonicalJson, canonicalSha256 } from '../../src/domain/canonicalJson.j
 import { DEFAULT_POLICY_CONTENT, validatePolicyContent } from '../../src/domain/policyContent.js';
 import { ifNoneMatchSatisfied, makePolicyEtag } from '../../src/domain/etag.js';
 
-// Shared cross-implementation vector (win32-apps must produce the same digest).
+// Shared cross-implementation vector (os-apps must produce the same digest).
 const CONTRACT_CONTENT = {
   enabled: true,
   default_action: 'allow',
