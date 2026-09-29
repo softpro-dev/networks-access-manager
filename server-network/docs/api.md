@@ -48,7 +48,7 @@ Server-specific details (compatible with the contract):
 ```
 200:
 ```json
-{ "access_token": "eyJ...", "token_type": "Bearer", "expires_in": 900,
+{ "access_token": "eyJ...", "token_type": "Bearer", "expires_in": 86400,
   "user": { "id": "...", "email": "superadmin@example.com", "role": "SUPER_ADMIN", "organization_id": null, "status": "ACTIVE", ... } }
 ```
 401 `INVALID_CREDENTIALS` (same for unknown user, bad password, disabled, locked). 429 when limited.

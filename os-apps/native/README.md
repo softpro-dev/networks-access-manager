@@ -7,4 +7,4 @@ Python service ships only `NotImplementedBackend`, which makes no network change
 and reports `ENFORCEMENT_NOT_AVAILABLE`. A future Windows-native component must
 implement the `EnforcementBackend` contract described in
 [`docs/windows-enforcement.md`](../docs/windows-enforcement.md); its sources would
-live in this directory.
+live in this directory.`

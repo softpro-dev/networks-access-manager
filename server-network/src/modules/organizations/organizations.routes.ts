@@ -12,6 +12,8 @@ import {
   loginLinkBody,
   getOrg,
   listOrgs,
+  rotateAccessToken,
+  clearAccessToken,
   rotateRegistrationToken,
   updateOrg,
   updateOrgBody,
@@ -36,4 +38,6 @@ export async function organizationRoutes(app: FastifyInstance) {
     deleteOrg(ctx, getAdmin(req), id(req.params), parse(deleteOrgQuery, req.query, 'Query').confirm, req.ip),
   );
   app.delete('/api/organizations/:id/registration-token', async (req) => clearRegistrationToken(ctx, getAdmin(req), id(req.params), req.ip));
+  app.post('/api/organizations/:id/access-token', async (req) => rotateAccessToken(ctx, getAdmin(req), id(req.params), req.ip));
+  app.delete('/api/organizations/:id/access-token', async (req) => clearAccessToken(ctx, getAdmin(req), id(req.params), req.ip));
 }

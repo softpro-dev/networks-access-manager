@@ -8,7 +8,7 @@ describe('config', () => {
   it('loads development defaults', () => {
     const c = loadConfig({ ...base });
     expect(c.port).toBe(3000);
-    expect(c.jwtTtlSeconds).toBe(900);
+    expect(c.jwtTtlSeconds).toBe(86_400);
     expect(c.heartbeatIntervalSeconds).toBe(60);
     expect(c.trustProxy).toBe(false);
     expect(c.corsOrigins).toEqual([]);

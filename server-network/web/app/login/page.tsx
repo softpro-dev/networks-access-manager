@@ -112,7 +112,7 @@ export default function LoginPage() {
         <Button type="submit" variant="primary" busy={busy} disabled={!email || !password} className="btn-block">
           Sign in
         </Button>
-        <p className="muted small">Sessions last for the API&apos;s JWT lifetime (default 15 minutes); sign in again when prompted.</p>
+        <p className="muted small">Sessions last 1 day (password or login link); sign in again when prompted.</p>
       </form>
     </main>
   );

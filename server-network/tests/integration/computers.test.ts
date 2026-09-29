@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
+import { canonicalSha256 } from '../../src/domain/canonicalJson.js';
 import {
   bearer,
   closeHarness,
@@ -155,5 +156,52 @@ describeDb('computers, login links, organization delete, analytics', () => {
     expect(own.totals.computers).toBe(0);
     const a = (await as(adminA)('GET', '/api/analytics/overview')).json();
     expect(a.organizations[0].restrictions.by_kind).toEqual({ ALLOW_ONLY: 1, BLACKLIST: 0, REDIRECT: 0 });
+  });
+
+  it('organization access token: fetch merged org-wide policy, ETag/304, rotation revokes', async () => {
+    const a = as(adminA);
+    const mk = async (code: string, kind: string, content: object) => {
+      const p = (await a('POST', '/api/policies', { name: code, code, kind, content, publish: true })).json();
+      await a('POST', `/api/policies/${p.id}/assignments`, { scope: 'ORGANIZATION' });
+      return p.id as string;
+    };
+    await mk('RST-001', 'BLACKLIST', { blocked_domains: ['bad.com'] });
+    await mk('RST-002', 'ALLOW_ONLY', { allowed_domains: ['school.org'] });
+
+    // Only a super admin or the org's own admin can mint the token.
+    expect((await as(adminB)('POST', `/api/organizations/${orgA}/access-token`)).statusCode).toBe(404);
+    const mint = await a('POST', `/api/organizations/${orgA}/access-token`);
+    expect(mint.statusCode, mint.body).toBe(200);
+    const token: string = mint.json().access_token;
+    expect(token).toMatch(/^nat_[A-Za-z0-9_-]{43}$/);
+
+    const svc = (headers: Record<string, string> = {}) => h.app.inject({ method: 'GET', url: '/api/agent/org-policy', headers });
+    expect((await svc()).statusCode).toBe(401);
+    expect((await svc({ authorization: 'Bearer nat_' + 'x'.repeat(43) })).statusCode).toBe(401);
+
+    const doc = await svc({ authorization: `Bearer ${token}` });
+    expect(doc.statusCode, doc.body).toBe(200);
+    const body = doc.json();
+    expect(body).toMatchObject({ policy_id: 'EFFECTIVE', organization_id: 'INST-001', assignment_scope: 'ORGANIZATION' });
+    expect(body.content.default_action).toBe('block'); // ALLOW_ONLY present
+    expect(body.content.blocked_domains).toEqual(['bad.com']);
+    expect(body.sources.map((s: { code: string }) => s.code).sort()).toEqual(['RST-001', 'RST-002']);
+    expect(canonicalSha256(body.content)).toBe(body.content_sha256);
+    const etag = doc.headers.etag as string;
+    expect((await svc({ authorization: `Bearer ${token}`, 'if-none-match': etag })).statusCode).toBe(304);
+
+    // No org-scoped policy → 404 (org B has none).
+    const tokenB = (await as(adminB)('POST', `/api/organizations/${orgB}/access-token`)).json().access_token;
+    expect((await svc({ authorization: `Bearer ${tokenB}` })).statusCode).toBe(404);
+
+    // Rotating the token revokes the old one immediately (never expires, but rotatable).
+    const rotated = (await a('POST', `/api/organizations/${orgA}/access-token`)).json().access_token;
+    expect(rotated).not.toBe(token);
+    expect((await svc({ authorization: `Bearer ${token}` })).statusCode).toBe(401);
+    expect((await svc({ authorization: `Bearer ${rotated}` })).statusCode).toBe(200);
+
+    // Clearing disables token access entirely.
+    await a('DELETE', `/api/organizations/${orgA}/access-token`);
+    expect((await svc({ authorization: `Bearer ${rotated}` })).statusCode).toBe(401);
   });
 });

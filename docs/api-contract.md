@@ -297,6 +297,38 @@ TLS interception is out of scope by design, so redirects are reliable only for p
 browser-level mechanism is used. The agent treats the rules as data; enforcement is a separate
 component.
 
+### 4.2 Organization service policy (`GET /api/agent/org-policy`)
+
+For unattended deployment, an organization can mint a **service access token** (admin console →
+organization → *Generate access token*; format `nat_<43 chars>`, non-expiring, revoked only by
+rotating or clearing it). A service authenticates with it and receives the merged **organization-wide**
+policy (all `ORGANIZATION`-scoped restrictions merged as in §4.1); group/device targeting does not
+apply in this mode.
+
+Request: `GET /api/agent/org-policy` with `Authorization: Bearer <access token>` and optional
+`If-None-Match`. Responses: `200` (body below, with `ETag`), `304 Not Modified`,
+`404 NO_POLICY_ASSIGNED`, `401 INVALID_ACCESS_TOKEN` (missing/invalid/rotated/cleared token, or
+disabled organization).
+
+```json
+{
+  "schema_version": 1,
+  "policy_id": "EFFECTIVE",
+  "version": 4,
+  "organization_id": "INST-001",
+  "assignment_scope": "ORGANIZATION",
+  "published_at": "2026-09-29T12:00:00.000Z",
+  "content_sha256": "...",
+  "sources": [{ "code": "RST-001", "kind": "BLACKLIST", "version": 1, "via": ["ORGANIZATION"] }],
+  "content": { "...": "as in §4" }
+}
+```
+
+The document has **no `device_uuid`** (there is no device identity). The service validates
+organization, `content_sha256` and domain/redirect syntax, and enforces the management-server
+exception. `version` is a per-organization counter that rises only when the merged content changes.
+The management server (`ADMIN_SERVER`) is always allowed by the enforcement exception.
+
 ---
 
 ## 5. Domain pattern semantics (both sides MUST implement identically)
@@ -374,6 +406,7 @@ A `403 CREDENTIAL_REVOKED` does **not** remove local enforcement.
 | `POST /api/agent/register` | 10 / min per IP |
 | `GET /api/agent/registration-status` | 30 / min per IP |
 | Authenticated agent endpoints | 120 / min per credential |
+| `GET /api/agent/org-policy` | 120 / min per access token |
 
 ---
 

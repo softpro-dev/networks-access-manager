@@ -60,6 +60,7 @@ export interface Organization {
   name: string;
   status: ActiveStatus;
   has_registration_token: boolean;
+  has_access_token: boolean;
   created_at: string;
   updated_at: string;
   stats?: { devices: number; pending_devices: number; policies: number };

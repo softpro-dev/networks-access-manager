@@ -8,7 +8,7 @@ import { useAuth } from '@/lib/auth';
 import { absTime } from '@/lib/format';
 import type { Organization } from '@/lib/types';
 import { Badge, Button, Card, ErrorBox, KeyValue, Mono, PageHeader, Spinner, StatusBadge } from '@/components/ui';
-import { LoginLinkButton, OrgFormDialog, OrgStatusDialog, RegistrationTokenControls } from '@/components/OrgDialogs';
+import { LoginLinkButton, OrgFormDialog, OrgStatusDialog, RegistrationTokenControls, AccessTokenControls } from '@/components/OrgDialogs';
 import { setScopedOrg } from '@/lib/orgScope';
 
 export default function OrganizationDetailPage() {
@@ -85,6 +85,7 @@ export default function OrganizationDetailPage() {
             Agents send this token once when registering with organization code <Mono>{o.code}</Mono>. Registered devices still need approval. The raw value is shown only when generated.
           </p>
           <RegistrationTokenControls org={o} />
+          <AccessTokenControls org={o} />
         </Card>
       </div>
       {isSuper && (

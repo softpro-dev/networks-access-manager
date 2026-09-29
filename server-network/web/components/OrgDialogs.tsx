@@ -177,6 +177,66 @@ export function RegistrationTokenControls({ org }: { org: Organization }) {
 }
 
 /**
+ * Organization service access token (used by SoftProIt.network.conducted). One click generates it,
+ * copies it to the clipboard for the installer, and shows it once. Non-expiring; rotate to revoke.
+ */
+export function AccessTokenControls({ org }: { org: Organization }) {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const [confirm, setConfirm] = useState(false);
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: ['organizations'] });
+    void qc.invalidateQueries({ queryKey: ['organization', org.id] });
+  };
+  const gen = useAction(() => post<{ access_token: string }>(`/organizations/${org.id}/access-token`), {
+    invalidate: [['organizations'], ['organization', org.id]],
+    onSuccess: async (r) => {
+      setConfirm(false);
+      try {
+        await navigator.clipboard.writeText(r.access_token);
+        toast('Access token copied — paste it into the agent installer (ACCESS_TOKE). Shown once.', 'success');
+      } catch {
+        toast(`Access token (copy now, shown once): ${r.access_token}`, 'info');
+      }
+    },
+  });
+  const clear = useAction(() => del<Organization>(`/organizations/${org.id}/access-token`), {
+    success: 'Access token cleared',
+    invalidate: [['organizations'], ['organization', org.id]],
+    onSuccess: invalidate,
+  });
+  return (
+    <>
+      <div className="btn-row">
+        <Button size="sm" busy={gen.isPending} onClick={() => (org.has_access_token ? setConfirm(true) : gen.mutate(undefined))}>
+          {org.has_access_token ? 'Rotate access token' : 'Generate access token'}
+        </Button>
+        {org.has_access_token && (
+          <Button size="sm" busy={clear.isPending} onClick={() => clear.mutate(undefined)}>
+            Clear
+          </Button>
+        )}
+      </div>
+      <ConfirmDialog
+        open={confirm}
+        title="Rotate access token"
+        confirmLabel="Rotate"
+        destructive
+        busy={gen.isPending}
+        error={gen.error}
+        onClose={() => setConfirm(false)}
+        onConfirm={() => gen.mutate(undefined)}
+      >
+        <p>
+          A new service access token for <strong>{org.code}</strong> is generated, copied, and shown once. The current token
+          stops working immediately, so every already-installed service must be reconfigured with the new token.
+        </p>
+      </ConfirmDialog>
+    </>
+  );
+}
+
+/**
  * Copy text that is still being fetched. The clipboard write must start inside the click (Safari
  * rejects writes after an await), so a ClipboardItem is handed a promise; browsers without
  * promise-based ClipboardItem fall back to writeText once the text arrives.

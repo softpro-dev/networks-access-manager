@@ -67,3 +67,22 @@ class PolicyDocument(BaseModel):
     content_sha256: StrictStr = Field(pattern=SHA256_PATTERN)
     sources: list[PolicySource] | None = Field(default=None, max_length=1000)
     content: dict
+
+
+class OrgPolicyDocument(BaseModel):
+    """Merged organization-wide policy for org-token mode (contract §4.2).
+
+    Same shape as `PolicyDocument` but with **no `device_uuid`** — there is no
+    device identity in org-token mode. `policy_id` is `EFFECTIVE`."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1]
+    policy_id: StrictStr = Field(pattern=POLICY_ID_PATTERN)
+    version: StrictInt = Field(ge=1)
+    organization_id: StrictStr = Field(pattern=ORG_ID_PATTERN)
+    assignment_scope: Literal["ORGANIZATION", "MERGED"]
+    published_at: StrictStr | None = None
+    content_sha256: StrictStr = Field(pattern=SHA256_PATTERN)
+    sources: list[PolicySource] | None = Field(default=None, max_length=1000)
+    content: dict

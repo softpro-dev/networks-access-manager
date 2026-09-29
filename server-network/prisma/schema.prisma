@@ -74,6 +74,8 @@ model Organization {
   status                OrganizationStatus @default(ACTIVE)
   /// sha256 hex of the per-organization registration token (null = use global AGENT_REGISTRATION_TOKEN)
   registrationTokenHash String?            @db.Char(64)
+  /// sha256 hex of the per-organization service access token (non-expiring; rotate to revoke)
+  accessTokenHash       String?            @unique @db.Char(64)
   createdAt             DateTime           @default(now())
   updatedAt             DateTime           @updatedAt
 
@@ -84,6 +86,7 @@ model Organization {
   policies    Policy[]
   assignments PolicyAssignment[]
   auditLogs   AuditLog[]
+  orgPolicy   OrgEffectivePolicy?
 }
 
 model User {
@@ -348,4 +351,18 @@ model LoginLink {
   createdAt   DateTime  @default(now())
 
   @@index([userId])
+}
+
+/// Merged organization-wide policy served to token-authenticated services (org access token). Like
+/// DeviceEffectivePolicy but keyed by organization and built from ORGANIZATION-scoped assignments.
+model OrgEffectivePolicy {
+  id             String       @id @default(cuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  version        Int
+  content        Json
+  contentSha256  String       @db.Char(64)
+  sources        Json
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 }

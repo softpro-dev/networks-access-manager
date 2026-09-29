@@ -17,7 +17,7 @@ from pydantic import ValidationError
 from .canonical import content_sha256, make_etag
 from .domains import DomainPatternError, decide, validate_domain_pattern
 from .ip_rules import validate_ip_or_cidr
-from .schema import PolicyContent, PolicyDocument
+from .schema import OrgPolicyDocument, PolicyContent, PolicyDocument
 
 MAX_DOCUMENT_BYTES = 4 * 1024 * 1024
 
@@ -139,6 +139,84 @@ def validate_policy(
     if response_etag is not None and response_etag.strip().removeprefix("W/") != etag:
         raise PolicyValidationError(5, "ETag header does not match the document")
 
+    return _validate_content(
+        policy_id=doc.policy_id,
+        version=doc.version,
+        content=content,
+        actual_sha=actual_sha,
+        etag=etag,
+        data=data,
+        management_hosts=management_hosts,
+    )
+
+
+def validate_org_policy(
+    raw: bytes | str | dict,
+    *,
+    expected_organization_id: str | None,
+    management_hosts: Sequence[str],
+    response_etag: str | None = None,
+) -> ValidatedPolicy:
+    """Validate the merged organization-wide policy for org-token mode (contract §4.2).
+
+    Identical to `validate_policy` except there is **no device_uuid** (step 4 is
+    skipped) and the organization check is applied only when a configured
+    organization is supplied. The management-server exception (step 7) is enforced,
+    so the ADMIN_SERVER host is always allowed.
+    """
+    # 1. JSON
+    data = parse_json(raw) if not isinstance(raw, dict) else raw
+    if not isinstance(data, dict):
+        raise PolicyValidationError(1, "document must be a JSON object")
+
+    # 2. schema (org-policy shape: no device_uuid; unknown keys rejected)
+    try:
+        doc = OrgPolicyDocument.model_validate(data)
+    except ValidationError as e:
+        raise PolicyValidationError(2, _schema_errors(e)) from None
+    try:
+        content = PolicyContent.model_validate(doc.content)
+    except ValidationError as e:
+        raise PolicyValidationError(2, _schema_errors(e, "content.")) from None
+
+    # 3. organization (only when a configured organization is known)
+    if expected_organization_id is not None and doc.organization_id != expected_organization_id:
+        raise PolicyValidationError(3, "policy was issued for a different organization")
+
+    # 4. (device assignment) — not applicable in org-token mode.
+
+    # 5. version + integrity
+    actual_sha = content_sha256(doc.content)
+    if actual_sha != doc.content_sha256:
+        raise PolicyValidationError(5, "content_sha256 does not match the canonical content hash")
+    etag = make_etag(doc.policy_id, doc.version, actual_sha)
+    if response_etag is not None and response_etag.strip().removeprefix("W/") != etag:
+        raise PolicyValidationError(5, "ETag header does not match the document")
+
+    return _validate_content(
+        policy_id=doc.policy_id,
+        version=doc.version,
+        content=content,
+        actual_sha=actual_sha,
+        etag=etag,
+        data=data,
+        management_hosts=management_hosts,
+    )
+
+
+def _validate_content(
+    *,
+    policy_id: str,
+    version: int,
+    content: PolicyContent,
+    actual_sha: str,
+    etag: str,
+    data: dict[str, Any],
+    management_hosts: Sequence[str],
+) -> ValidatedPolicy:
+    """Steps 6-8 shared by per-device and org-token validation: domain/IP/redirect
+    syntax, the management-server exception, and enforcement-configuration warnings."""
+
     # 6. domain + IP syntax
     def norm_domains(values: list[str], fld: str) -> tuple[str, ...]:
         out = []
@@ -197,8 +275,8 @@ def validate_policy(
         warnings.append(f"{len(overlap)} pattern(s) are both allowed and blocked; equal specificity resolves to BLOCK")
 
     return ValidatedPolicy(
-        policy_id=doc.policy_id,
-        version=doc.version,
+        policy_id=policy_id,
+        version=version,
         content_sha256=actual_sha,
         etag=etag,
         document=data,

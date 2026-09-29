@@ -6,10 +6,11 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..platform import IS_WINDOWS
+from ..platform import IS_MACOS, IS_WINDOWS
 
 DATA_DIR_ENV = "NAM_DATA_DIR"
 PRODUCT_DIR_NAME = "OrganizationNetworkAgent"
+MACOS_DATA_ROOT = Path("/Library/Application Support") / PRODUCT_DIR_NAME
 
 
 class DataDirError(RuntimeError):
@@ -49,8 +50,9 @@ def default_root(environ: dict[str, str] | None = None) -> Path:
     """Resolve the data root.
 
     `NAM_DATA_DIR` always wins (development / tests). On Windows the default is
-    `%ProgramData%\\OrganizationNetworkAgent`. Elsewhere there is no safe default,
-    so NAM_DATA_DIR is required.
+    `%ProgramData%\\OrganizationNetworkAgent`; on macOS it is
+    `/Library/Application Support/OrganizationNetworkAgent`. On other platforms
+    there is no safe default, so NAM_DATA_DIR is required.
     """
     env = os.environ if environ is None else environ
     override = env.get(DATA_DIR_ENV)
@@ -59,7 +61,9 @@ def default_root(environ: dict[str, str] | None = None) -> Path:
     if IS_WINDOWS:
         program_data = env.get("ProgramData") or env.get("PROGRAMDATA") or r"C:\ProgramData"
         return Path(program_data) / PRODUCT_DIR_NAME
-    raise DataDirError(f"{DATA_DIR_ENV} must be set when not running on Windows")
+    if IS_MACOS:
+        return MACOS_DATA_ROOT
+    raise DataDirError(f"{DATA_DIR_ENV} must be set when not running on Windows or macOS")
 
 
 def resolve_paths(environ: dict[str, str] | None = None) -> AgentPaths:

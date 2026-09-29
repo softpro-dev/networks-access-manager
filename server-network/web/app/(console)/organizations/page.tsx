@@ -7,7 +7,7 @@ import { useOrganizations } from '@/lib/queries';
 import { absTime } from '@/lib/format';
 import type { Organization } from '@/lib/types';
 import { Alert, Badge, Button, Empty, ErrorBox, PageHeader, Spinner, StatusBadge } from '@/components/ui';
-import { DeleteOrgDialog, LoginLinkButton, OrgFormDialog, OrgStatusDialog, RegistrationTokenControls } from '@/components/OrgDialogs';
+import { DeleteOrgDialog, LoginLinkButton, OrgFormDialog, OrgStatusDialog, RegistrationTokenControls, AccessTokenControls } from '@/components/OrgDialogs';
 
 function OrganizationsInner() {
   const { isSuper, user, features } = useAuth();
@@ -67,6 +67,7 @@ function OrganizationsInner() {
                     <div className="cell-inline">
                       {o.has_registration_token ? <Badge tone="green">set</Badge> : <Badge tone="gray">global / none</Badge>}
                       <RegistrationTokenControls org={o} />
+                      <AccessTokenControls org={o} />
                     </div>
                   </td>
                   <td>{absTime(o.created_at)}</td>

@@ -95,3 +95,54 @@ export async function resolveEffectivePolicy(db: PrismaClient, device: { id: str
   }
   throw new Error('Could not resolve the effective policy (concurrent updates)');
 }
+
+/** Every active, published ORGANIZATION-scoped restriction (used for the org access-token service). */
+export async function collectOrgRestrictions(db: Client, organizationId: string): Promise<RestrictionInput[]> {
+  const assignments = await db.policyAssignment.findMany({
+    where: {
+      organizationId,
+      scope: 'ORGANIZATION',
+      policy: { organizationId, isActive: true, activeVersionId: { not: null } },
+    },
+    include: { policy: { include: { activeVersion: true } } },
+  });
+  const out: RestrictionInput[] = [];
+  for (const a of assignments) {
+    const v = a.policy.activeVersion;
+    if (a.policy.organizationId !== organizationId || !v || v.status !== 'PUBLISHED' || !v.contentSha256) continue;
+    out.push({ policy_id: a.policy.id, code: a.policy.code, kind: a.policy.kind, version: v.version, via: 'ORGANIZATION', content: v.content as unknown as PolicyContent });
+  }
+  return out;
+}
+
+/** Merged organization-wide policy for a token-authenticated service. Version bumps only on change. */
+export async function resolveOrgEffectivePolicy(db: PrismaClient, organizationId: string): Promise<EffectivePolicy | null> {
+  const merged = mergeRestrictions(await collectOrgRestrictions(db, organizationId));
+  if (!merged) return null;
+  const sha = canonicalSha256(merged.content);
+  const content = merged.content as unknown as Prisma.InputJsonValue;
+  const sources = merged.sources as unknown as Prisma.InputJsonValue;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const stored = await db.orgEffectivePolicy.findUnique({ where: { organizationId } });
+    if (stored && stored.contentSha256 === sha) {
+      if (JSON.stringify(stored.sources) !== JSON.stringify(merged.sources)) {
+        return toEffective(await db.orgEffectivePolicy.update({ where: { id: stored.id }, data: { sources } }));
+      }
+      return toEffective(stored);
+    }
+    if (!stored) {
+      try {
+        return toEffective(await db.orgEffectivePolicy.create({ data: { organizationId, version: 1, content, contentSha256: sha, sources } }));
+      } catch (e) {
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') continue;
+        throw e;
+      }
+    }
+    const r = await db.orgEffectivePolicy.updateMany({
+      where: { id: stored.id, contentSha256: stored.contentSha256 },
+      data: { version: stored.version + 1, content, contentSha256: sha, sources },
+    });
+    if (r.count === 1) return toEffective(await db.orgEffectivePolicy.findUniqueOrThrow({ where: { id: stored.id } }));
+  }
+  throw new Error('Could not resolve the organization effective policy (concurrent updates)');
+}

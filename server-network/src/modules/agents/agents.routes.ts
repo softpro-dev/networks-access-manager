@@ -19,6 +19,7 @@ export async function agentRoutes(app: FastifyInstance) {
   const registerLimit = makeLimiter(app, enabled, { name: 'agent-register', max: 10, windowMs: 60_000, key: (r) => r.ip });
   const statusLimit = makeLimiter(app, enabled, { name: 'agent-regstatus', max: 30, windowMs: 60_000, key: (r) => r.ip });
   const authedLimit = makeLimiter(app, enabled, { name: 'agent-authed', max: 120, windowMs: 60_000, key: credentialKey });
+  const orgTokenLimit = makeLimiter(app, enabled, { name: 'agent-org', max: 120, windowMs: 60_000, key: (r) => `nat:${(parseBearer(r.headers.authorization)?.credentialId) ?? r.ip}` });
   const auth = deviceAuth(ctx);
 
   app.post('/api/agent/register', { onRequest: registerLimit }, async (req, reply) => {
@@ -32,6 +33,17 @@ export async function agentRoutes(app: FastifyInstance) {
   app.get('/api/agent/registration-status', { onRequest: statusLimit }, async (req) => {
     const h = parse(registrationStatusHeaders, req.headers, 'Headers');
     return svc.registrationStatus(ctx, h['x-device-uuid'], h['x-enrollment-secret'], req.ip);
+  });
+
+  // Organization service policy: authenticated by the org access token (Bearer nat_...). No per-device
+  // enrollment; the management server is always reachable (management exception) by design.
+  app.get('/api/agent/org-policy', { onRequest: orgTokenLimit }, async (req, reply) => {
+    const org = await svc.authOrgAccessToken(ctx, req.headers.authorization);
+    const r = await svc.orgPolicyDocument(ctx, org);
+    if (!r) throw new AppError(404, 'NO_POLICY_ASSIGNED', 'No organization-wide policy is assigned');
+    reply.header('etag', r.etag).header('cache-control', 'no-cache, private');
+    if (ifNoneMatchSatisfied(req.headers['if-none-match'], r.etag)) return reply.code(304).send();
+    return r.document;
   });
 
   app.register(async (authed) => {

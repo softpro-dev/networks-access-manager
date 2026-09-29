@@ -23,7 +23,7 @@ const envSchema = z
     PORT: z.coerce.number().int().min(1).max(65535).default(3000),
     DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
     JWT_SECRET: z.string().min(1, 'JWT_SECRET is required'),
-    JWT_TTL_SECONDS: z.coerce.number().int().min(60).max(86_400).default(900),
+    JWT_TTL_SECONDS: z.coerce.number().int().min(60).max(86_400).default(86_400),
     AGENT_REGISTRATION_TOKEN: z.string().optional().default(''),
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
     TRUST_PROXY: z.string().optional().default('false'),

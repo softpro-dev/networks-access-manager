@@ -5,7 +5,7 @@
  Admin CLI ────────────────────────────────HTTPS──────────────┤
                                                               ▼
                                 ┌──────────── server-network ────────────┐ ◀──HTTPS── Windows agents
-   JWT (15 min) + Session row   │ Fastify                                │   ndc_ device credential
+   JWT (1 day) + Session row    │ Fastify                                │   ndc_ device credential
                                 │  ├─ /api/auth, /api/organizations, ... │
                                 │  ├─ /api/agent/*  (wire contract)      │
                                 │  └─ error handler → {"error":{...}}    │

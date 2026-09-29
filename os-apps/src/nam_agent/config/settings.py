@@ -24,6 +24,11 @@ ORG_ID_RE = re.compile(r"^[A-Z0-9][A-Z0-9-]{1,31}$")
 
 # env var name -> settings field name
 ENV_KEYS: dict[str, str] = {
+    # --- documented org-token-mode keys (see .env.example) ---
+    "ADMIN_SERVER": "admin_server",
+    "ACCESS_TOKE": "access_token",
+    "CACHE_EXPIRATION_TIME_IN_MINUTE": "cache_expiration_minutes",
+    # --- per-device (enrollment) keys, still supported ---
     "ORGANIZATION_ID": "organization_id",
     "API_BASE_URL": "api_base_url",
     "DEVICE_REGISTRATION_TOKEN": "device_registration_token",
@@ -37,7 +42,14 @@ ENV_KEYS: dict[str, str] = {
     "PRIMARY_INTERFACE": "primary_interface",
     "NAM_SECRET_PROTECTOR": "secret_protector",
     "NAM_ALLOW_INSECURE_HTTP": "allow_insecure_http",
+    # The API base is derived as `${ADMIN_SERVER}${NAM_API_BASE_SUFFIX}` (default "/api").
+    # Override the suffix for non-standard deployments; API_BASE_URL overrides it entirely.
+    "NAM_API_BASE_SUFFIX": "api_base_suffix",
 }
+
+# Selected agent operating modes.
+MODE_ORG_TOKEN = "org-token"
+MODE_PER_DEVICE = "per-device"
 
 
 class ConfigError(ValueError):
@@ -69,8 +81,14 @@ def validate_api_base_url(value: str, allow_insecure_http: bool = False) -> str:
 class AgentSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    organization_id: str
-    api_base_url: str
+    # organization_id is required in per-device mode and optional in org-token mode.
+    organization_id: str | None = None
+    # api_base_url may be given explicitly or derived from admin_server + api_base_suffix.
+    api_base_url: str | None = None
+    admin_server: str | None = None
+    api_base_suffix: str = "/api"
+    access_token: SecretStr | None = None
+    cache_expiration_minutes: int = Field(default=5, ge=1, le=1440)
     device_registration_token: SecretStr | None = None
     policy_cache_ttl: int = Field(default=300, ge=30, le=86400)
     heartbeat_interval: int = Field(default=60, ge=10, le=3600)
@@ -80,15 +98,40 @@ class AgentSettings(BaseModel):
     http_timeout: float = Field(default=15.0, ge=1.0, le=120.0)
     enrollment_poll_interval: int = Field(default=45, ge=30, le=600)
     primary_interface: str | None = None
-    secret_protector: Literal["dpapi", "insecure-dev"] = "dpapi"
+    secret_protector: Literal["dpapi", "file-key", "insecure-dev"] = "dpapi"
     allow_insecure_http: bool = False
 
     @field_validator("organization_id")
     @classmethod
-    def _org(cls, v: str) -> str:
+    def _org(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         v = v.strip()
+        if not v:
+            return None
         if not ORG_ID_RE.match(v):
             raise ValueError("ORGANIZATION_ID must match ^[A-Z0-9][A-Z0-9-]{1,31}$")
+        return v
+
+    @field_validator("access_token", mode="before")
+    @classmethod
+    def _access_token(cls, v: object) -> object:
+        if v is None:
+            return None
+        s = v.get_secret_value() if isinstance(v, SecretStr) else str(v)
+        s = s.strip()
+        # Ignore the .env.example placeholder so an unedited template selects nothing.
+        if not s or s == "copy_from_organization_list":
+            return None
+        if len(s) > 512 or any(c.isspace() for c in s):
+            raise ValueError("ACCESS_TOKE has an invalid format")
+        return s
+
+    @field_validator("admin_server", "api_base_url", mode="before")
+    @classmethod
+    def _url_empty_none(cls, v: object) -> object:
+        if isinstance(v, str) and not v.strip():
+            return None
         return v
 
     @field_validator("log_level", mode="before")
@@ -118,10 +161,32 @@ class AgentSettings(BaseModel):
 
     @model_validator(mode="after")
     def _cross(self) -> "AgentSettings":
-        object.__setattr__(self, "api_base_url", validate_api_base_url(self.api_base_url, self.allow_insecure_http))
+        # Derive the API base: an explicit API_BASE_URL wins; otherwise use ADMIN_SERVER
+        # + the (overridable) suffix. The admin console proxies /api to the API.
+        api_base = self.api_base_url
+        if api_base is None and self.admin_server is not None:
+            suffix = self.api_base_suffix if self.api_base_suffix.startswith("/") else "/" + self.api_base_suffix
+            api_base = self.admin_server.rstrip("/") + suffix.rstrip("/")
+        if api_base is None:
+            raise ValueError("API_BASE_URL or ADMIN_SERVER is required")
+        object.__setattr__(self, "api_base_url", validate_api_base_url(api_base, self.allow_insecure_http))
+        # Normalize/validate ADMIN_SERVER too when it was supplied.
+        if self.admin_server is not None:
+            object.__setattr__(self, "admin_server", validate_api_base_url(self.admin_server, self.allow_insecure_http))
+        if self.mode == MODE_PER_DEVICE and self.organization_id is None:
+            raise ValueError("ORGANIZATION_ID is required in per-device mode (set ACCESS_TOKE for org-token mode)")
         if self.ca_bundle is not None and not self.ca_bundle.is_file():
             raise ValueError("CA_BUNDLE does not point to an existing file")
         return self
+
+    @property
+    def mode(self) -> str:
+        """`org-token` when an ACCESS_TOKE is configured, otherwise `per-device`."""
+        return MODE_ORG_TOKEN if self.access_token is not None else MODE_PER_DEVICE
+
+    @property
+    def cache_expiration_seconds(self) -> int:
+        return self.cache_expiration_minutes * 60
 
     @property
     def management_host(self) -> str:

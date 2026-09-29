@@ -132,6 +132,28 @@ class AgentApiClient:
             raise ApiUnavailable("policy: document too large", resp.status_code)
         return PolicyFetch(kind="document", body=resp.content, etag=resp.headers.get("etag"))
 
+    def org_policy(self, access_token: str, if_none_match: str | None = None) -> PolicyFetch:
+        """Org-token mode: fetch the merged organization-wide policy (contract §4.2).
+
+        `GET {api}/agent/org-policy` with `Authorization: Bearer <ACCESS_TOKE>`.
+        200 (+ETag) → document, 304 → not_modified, 404 NO_POLICY_ASSIGNED → none.
+        401 INVALID_ACCESS_TOKEN and other 4xx propagate as ApiError.
+        """
+        headers = self._bearer(access_token)
+        if if_none_match:
+            headers["If-None-Match"] = if_none_match
+        try:
+            resp = self._send("GET", "agent/org-policy", headers=headers)
+        except ApiError as e:
+            if e.status == 404 and e.code == "NO_POLICY_ASSIGNED":
+                return PolicyFetch(kind="none")
+            raise
+        if resp.status_code == 304:
+            return PolicyFetch(kind="not_modified", etag=resp.headers.get("etag"))
+        if len(resp.content) > MAX_POLICY_BYTES:
+            raise ApiUnavailable("org-policy: document too large", resp.status_code)
+        return PolicyFetch(kind="document", body=resp.content, etag=resp.headers.get("etag"))
+
     def report_status(self, token: str, body: dict[str, Any]) -> None:
         self._send("POST", "agent/policy/status", headers=self._bearer(token), json=body)
 

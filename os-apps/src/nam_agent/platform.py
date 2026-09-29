@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 
 IS_WINDOWS = sys.platform == "win32"
+IS_MACOS = sys.platform == "darwin"
 
 
 def is_frozen() -> bool:

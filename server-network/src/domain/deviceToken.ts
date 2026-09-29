@@ -39,3 +39,19 @@ export function generateDeviceToken(credentialId: string): { token: string; secr
 export function hashEnrollmentSecret(raw: string): string {
   return sha256Hex(Buffer.from(raw, 'utf8'));
 }
+
+/** Organization service access token `nat_<secret>` (contract: non-expiring, revoked by rotation). */
+const ACCESS_TOKEN_RE = /^nat_([A-Za-z0-9_-]{43})$/;
+
+export function generateAccessToken(): { token: string; tokenHash: string } {
+  const secret = randomSecret(32);
+  const token = `nat_${secret}`;
+  return { token, tokenHash: sha256Hex(token) };
+}
+
+export function parseAccessTokenBearer(header: string | undefined): string | null {
+  if (!header) return null;
+  const m = /^Bearer\s+(\S+)$/i.exec(header.trim());
+  if (!m) return null;
+  return ACCESS_TOKEN_RE.test(m[1]!) ? m[1]! : null;
+}

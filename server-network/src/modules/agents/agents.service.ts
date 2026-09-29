@@ -304,3 +304,40 @@ export async function ackPolicy(ctx: AppContext, dev: DeviceIdentity, body: z.in
     ip,
   });
 }
+
+// ---------------- organization service (access-token) policy ----------------
+import { resolveOrgEffectivePolicy } from '../../services/policyResolution.js';
+import { parseAccessTokenBearer } from '../../domain/deviceToken.js';
+
+const invalidAccess = () => new AppError(401, 'INVALID_ACCESS_TOKEN', 'Invalid or revoked organization access token');
+
+/** Resolve the organization for a service access token (Bearer nat_...). Rotating the token revokes it. */
+export async function authOrgAccessToken(ctx: AppContext, authorization: string | undefined) {
+  const token = parseAccessTokenBearer(authorization);
+  if (!token) throw invalidAccess();
+  const org = await ctx.prisma.organization.findUnique({ where: { accessTokenHash: sha256Hex(token) } });
+  if (!org || org.status !== 'ACTIVE') throw invalidAccess();
+  return org;
+}
+
+/** Merged organization-wide policy document for a token-authenticated service (SoftProIt.network.conducted). */
+export async function orgPolicyDocument(ctx: AppContext, org: { id: string; code: string }) {
+  const e = await resolveOrgEffectivePolicy(ctx.prisma, org.id);
+  if (!e) return null;
+  if (canonicalSha256(e.content) !== e.contentSha256) throw new AppError(500, 'INTERNAL_ERROR', 'Policy integrity check failed');
+  const etag = makePolicyEtag(EFFECTIVE_POLICY_ID, e.version, e.contentSha256);
+  return {
+    etag,
+    document: {
+      schema_version: 1,
+      policy_id: EFFECTIVE_POLICY_ID,
+      version: e.version,
+      organization_id: org.code,
+      assignment_scope: 'ORGANIZATION',
+      published_at: e.updatedAt.toISOString(),
+      content_sha256: e.contentSha256,
+      sources: e.sources.map((s) => ({ code: s.code, kind: s.kind, version: s.version, via: s.via })),
+      content: e.content,
+    },
+  };
+}

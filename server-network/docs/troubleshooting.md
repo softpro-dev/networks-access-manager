@@ -13,7 +13,7 @@
 | Agent gets 403 `CREDENTIAL_REVOKED` / `DEVICE_NOT_APPROVED` | Device revoked/re-enrolled, or organization disabled. |
 | Agent gets 404 `NO_POLICY_ASSIGNED` | No active policy with a published active version is assigned (check `effective_policy` on `GET /api/devices/:id`, policy `is_active`, assignment scope). |
 | 429 `RATE_LIMITED` | Limits per contract §7; behind a proxy set `TRUST_PROXY` or all clients share one IP bucket. |
-| Admin token suddenly 401 | Token expired (15 min default), logged out, user/org disabled, or password changed. Log in again. |
+| Admin token suddenly 401 | Token expired (1 day default, JWT_TTL_SECONDS), logged out, user/org disabled, or password changed. Log in again. |
 | 500 `Policy integrity check failed` | Stored content no longer hashes to the published sha256 (manual DB edit). Publish a new version. |
 | Wrong client IPs in audit | Configure `TRUST_PROXY` to the reverse proxy address. |
 
