@@ -136,8 +136,12 @@ export function ComputerFormDialog({ open, device, defaultOrgId, onClose }: { op
       },
     },
   );
+  const [showMacHelp, setShowMacHelp] = useState(false);
   useEffect(() => {
-    if (open) save.reset();
+    if (open) {
+      save.reset();
+      setShowMacHelp(false);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -175,7 +179,6 @@ export function ComputerFormDialog({ open, device, defaultOrgId, onClose }: { op
             receives restrictions.
           </p>
         )}
-        {!editing && <MacAddressHelp />}
         {isSuper && !editing && (
           <Field label="Organization">
             <select value={f.organization_id} onChange={(e) => setF({ ...f, organization_id: e.target.value, groups: [] })}>
@@ -188,6 +191,12 @@ export function ComputerFormDialog({ open, device, defaultOrgId, onClose }: { op
             </select>
           </Field>
         )}
+        <div className="mac-help-toggle">
+          <button type="button" className="link-button" aria-expanded={showMacHelp} aria-controls="mac-help" onClick={() => setShowMacHelp((v) => !v)}>
+            {showMacHelp ? 'Hide MAC address help' : 'How do I find the MAC address?'}
+          </button>
+        </div>
+        {showMacHelp && <MacAddressHelp />}
         <Field
           label={macOptional ? 'MAC address (optional)' : 'MAC address'}
           hint={mac && mac !== f.mac.trim() ? <>Will be saved as <Mono>{mac}</Mono></> : 'Any common format: AA:BB:CC:DD:EE:FF, aa-bb-cc-dd-ee-ff, aabb.ccdd.eeff'}
@@ -277,7 +286,7 @@ const MAC_COMMANDS = [
 
 function MacAddressHelp() {
   return (
-    <div className="mac-help">
+    <div className="mac-help" id="mac-help">
       <div className="mac-help-title">Find the MAC address on the computer</div>
       {MAC_COMMANDS.map((c) => (
         <div className="mac-help-row" key={c.os}>

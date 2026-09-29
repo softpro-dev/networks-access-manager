@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, del, patch, post } from '@/lib/api';
 import { useAction } from '@/lib/queries';
-import { absTime } from '@/lib/format';
 import type { LoginLink, Organization } from '@/lib/types';
 import { useToast } from './toast';
 import { Alert, Button, ConfirmDialog, CopyButton, ErrorBox, Field, Modal, Mono } from './ui';
@@ -177,49 +176,46 @@ export function RegistrationTokenControls({ org }: { org: Organization }) {
   );
 }
 
+/**
+ * Copy text that is still being fetched. The clipboard write must start inside the click (Safari
+ * rejects writes after an await), so a ClipboardItem is handed a promise; browsers without
+ * promise-based ClipboardItem fall back to writeText once the text arrives.
+ */
+async function copyPending(text: Promise<string>): Promise<void> {
+  if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ 'text/plain': text.then((t) => new Blob([t], { type: 'text/plain' })) })]);
+      return;
+    } catch (e) {
+      // A failed request must not be retried as a clipboard fallback.
+      await text;
+      void e;
+    }
+  }
+  await navigator.clipboard.writeText(await text);
+}
+
 /** Super admin: issue a one-time sign-in link for the organization's (oldest active) admin and copy it. */
 export function LoginLinkButton({ org }: { org: Organization }) {
-  const [link, setLink] = useState<LoginLink | null>(null);
-  const [copied, setCopied] = useState(false);
   const toast = useToast();
-  const m = useAction(() => post<LoginLink>(`/organizations/${org.id}/login-link`, {}), {
-    invalidate: [['audit']],
-    toastErrors: true,
-    onSuccess: async (r) => {
-      setLink(r);
-      try {
-        await navigator.clipboard.writeText(r.url);
-        setCopied(true);
-        toast(`Sign-in link for ${r.user.email} copied`, 'success');
-      } catch {
-        setCopied(false);
-      }
-    },
-  });
-  const minutes = link ? Math.max(1, Math.round((new Date(link.expires_at).getTime() - Date.now()) / 60_000)) : 0;
+  const m = useAction(() => post<LoginLink>(`/organizations/${org.id}/login-link`, {}), { invalidate: [['audit']], toastErrors: true });
+  const onClick = () => {
+    const link = m.mutateAsync(undefined);
+    copyPending(link.then((r) => r.url))
+      .then(async () => {
+        const r = await link;
+        const minutes = Math.max(1, Math.round((new Date(r.expires_at).getTime() - Date.now()) / 60_000));
+        toast(`Login link for ${r.user.email} copied — valid ${minutes} min, single use`, 'success');
+      })
+      .catch(async () => {
+        // Request errors are already toasted by useAction; only report clipboard failures here.
+        if (await link.then(() => true, () => false)) toast('Could not copy: the browser blocked clipboard access. Try again.', 'error');
+      });
+  };
   return (
-    <>
-      <Button size="sm" busy={m.isPending} disabled={org.status !== 'ACTIVE'} title={org.status !== 'ACTIVE' ? 'Organization is disabled' : `Sign in as an administrator of ${org.code}`} onClick={() => m.mutate(undefined)}>
-        Copy login link
-      </Button>
-      <Modal open={!!link} onClose={() => setLink(null)} title={`Login link · ${org.code}`} footer={<Button variant="primary" onClick={() => setLink(null)}>Done</Button>}>
-        {link && (
-          <div className="stack">
-            <p>
-              Signs in as <strong>{link.user.email}</strong> (organization administrator of {org.name}).
-            </p>
-            <Alert tone="warn" title={`Valid ${minutes} min, single use`}>
-              Expires {absTime(link.expires_at)}. Anyone who opens it first is signed in as this administrator — share it only over a trusted channel. Open it in a private window to keep your own session.
-            </Alert>
-            <div className="secret-box">
-              <code className="mono secret">{link.url}</code>
-              <CopyButton value={link.url} label={copied ? 'Copy again' : 'Copy'} />
-            </div>
-            {!copied && <p className="muted small">The browser blocked clipboard access; copy the link above.</p>}
-          </div>
-        )}
-      </Modal>
-    </>
+    <Button size="sm" busy={m.isPending} disabled={org.status !== 'ACTIVE'} title={org.status !== 'ACTIVE' ? 'Organization is disabled' : `Copy a one-time sign-in link for an administrator of ${org.code}`} onClick={onClick}>
+      Copy login link
+    </Button>
   );
 }
 
