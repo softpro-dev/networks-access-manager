@@ -56,7 +56,7 @@ npm run suadmin__reset_password   # scripts/reset-password.ts
 
 ## os-apps commands
 
-Run from `os-apps/`. macOS/Linux dev works; on Windows use `.venv\Scripts\python` in place of `.venv/bin/python`. The `.venv` currently in this checkout is a macOS venv (`bin/` layout, anaconda paths) and won't run on Windows. `build.ps1` only creates a venv when `.venv` is missing, so delete that folder first on Windows.
+Run from `os-apps/`. macOS/Linux dev works; on Windows use `.venv\Scripts\python` in place of `.venv/bin/python`. `build.ps1` only creates a venv when `.venv` is missing (a venv copied from another OS must be deleted first), and it runs `-Python` through `Invoke-Expression`, which breaks on paths with spaces — pre-create `.venv` instead.
 
 ```bash
 python3.12 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
@@ -75,7 +75,7 @@ export ADMIN_SERVER=http://localhost:3001 NAM_ALLOW_INSECURE_HTTP=true ACCESS_TO
 
 PyInstaller can't cross-compile, so build on the target OS:
 
-- Windows x64: `powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Installer` (`-SkipTests` skips pytest). Produces both exes (onedir) in `dist/` plus the Inno Setup installer.
+- Windows x64: `powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Installer` (`-SkipTests` skips pytest). Produces both exes (onedir) in `dist/` plus the Inno Setup installer (`installer\Output\SoftProIt-Network-<ver>-setup.exe`). `-Installer` only finds ISCC under Program Files; with a per-user Inno Setup install run `"$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" installer\OrganizationNetworkAgent.iss` manually.
 - macOS: `scripts/build.sh` (`SKIP_TESTS=1` skips pytest). Sign, notarize and build the .pkg per `installer/README-macos.md`. The launchd path has not been verified end-to-end.
 - Step-by-step build guides are in `how-to/`.
 
