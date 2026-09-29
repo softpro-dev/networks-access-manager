@@ -1,7 +1,8 @@
 -r requirements.txt
 pytest>=8
-# Build tooling (Windows only; PyInstaller does not cross-compile).
-pyinstaller>=6.6; sys_platform == "win32"
+# Build tooling. PyInstaller does not cross-compile: build the Windows .exe on
+# Windows x64 and the macOS app on macOS.
+pyinstaller>=6.6; sys_platform == "win32" or sys_platform == "darwin"
 # Optional dev-only fallback for interface discovery on macOS/Linux.
 # The Windows build uses GetAdaptersAddresses via ctypes and does not ship psutil.
 psutil>=5.9; sys_platform != "win32"

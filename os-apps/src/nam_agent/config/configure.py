@@ -76,7 +76,7 @@ def apply_configuration(
     paths.ensure()
     db = Database(paths.db_path)
     try:
-        store = SecretStore(db, make_protector(raw.get("secret_protector", "dpapi")))
+        store = SecretStore(db, make_protector(raw.get("secret_protector", "dpapi"), key_dir=paths.config_dir))
         state = db.get_row("device_state")
         enrolled_org = state["organization_id"]
         if enrolled_org and enrolled_org != req.organization_id and store.has(DEVICE_CREDENTIAL):

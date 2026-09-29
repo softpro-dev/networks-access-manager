@@ -1,6 +1,14 @@
-# Runtime dependencies of OrganizationNetworkAgent.
+# Runtime dependencies of the SoftProIt network agent + admin apps.
 httpx>=0.27,<1
 pydantic>=2.7,<3
 python-dotenv>=1.0,<2
 # Windows-only: Windows Service host, DPAPI, Event Log.
 pywin32>=306; sys_platform == "win32"
+
+# SoftProIt.network.admin (desktop wrapper) only. Not imported by the service.
+# On Windows pywebview uses the Edge WebView2 runtime; on macOS the system WebKit
+# via pyobjc. Kept out of the service build (see SoftProIt.network.conducted.spec).
+pywebview>=5,<6
+pyobjc-core>=10; sys_platform == "darwin"
+pyobjc-framework-Cocoa>=10; sys_platform == "darwin"
+pyobjc-framework-WebKit>=10; sys_platform == "darwin"

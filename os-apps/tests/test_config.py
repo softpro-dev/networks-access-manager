@@ -99,12 +99,22 @@ def test_data_dir_override(tmp_path):
     assert p.logs_dir == tmp_path / "logs"
 
 
-def test_non_windows_requires_data_dir(monkeypatch):
+def test_other_platform_requires_data_dir(monkeypatch):
+    # Neither Windows nor macOS (e.g. Linux): NAM_DATA_DIR is mandatory.
     monkeypatch.setattr("nam_agent.config.paths.IS_WINDOWS", False)
+    monkeypatch.setattr("nam_agent.config.paths.IS_MACOS", False)
     with pytest.raises(DataDirError):
         default_root({})
 
 
 def test_windows_default_root(monkeypatch):
     monkeypatch.setattr("nam_agent.config.paths.IS_WINDOWS", True)
+    monkeypatch.setattr("nam_agent.config.paths.IS_MACOS", False)
     assert str(default_root({"ProgramData": "C:\\ProgramData"})).endswith("OrganizationNetworkAgent")
+
+
+def test_macos_default_root(monkeypatch):
+    monkeypatch.setattr("nam_agent.config.paths.IS_WINDOWS", False)
+    monkeypatch.setattr("nam_agent.config.paths.IS_MACOS", True)
+    root = default_root({})
+    assert str(root) == "/Library/Application Support/OrganizationNetworkAgent"

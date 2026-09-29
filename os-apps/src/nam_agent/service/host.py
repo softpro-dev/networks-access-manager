@@ -28,7 +28,7 @@ def run_agent(stop: threading.Event, *, console: bool = False, event_log: bool =
             stop.wait(CONFIG_RETRY_SECONDS)
             continue
         configure_logging(paths.logs_dir, rt.settings.log_level, console=console, event_log=event_log)
-        log.info("agent starting (device %s, organization %s)", rt.agent.device_uuid, rt.settings.organization_id)
+        log.info("agent starting (mode=%s, organization=%s, server=%s)", rt.settings.mode, rt.settings.organization_id, rt.settings.api_base_url)
         try:
             rt.agent.run(stop)
         finally:

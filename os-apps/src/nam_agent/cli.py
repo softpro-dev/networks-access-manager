@@ -19,7 +19,7 @@ import threading
 from pathlib import Path
 
 from . import AGENT_VERSION, SERVICE_NAME
-from .platform import IS_WINDOWS, is_frozen
+from .platform import IS_MACOS, IS_WINDOWS, is_frozen
 
 
 def _fail(msg: str, code: int = 1) -> int:
@@ -30,8 +30,9 @@ def _fail(msg: str, code: int = 1) -> int:
 def _require_admin() -> int | None:
     from .security.elevation import is_elevated
 
-    if IS_WINDOWS and not is_elevated():
-        return _fail("this command must be run from an elevated (Administrator) prompt", 5)
+    if (IS_WINDOWS or IS_MACOS) and not is_elevated():
+        who = "Administrator" if IS_WINDOWS else "root (sudo)"
+        return _fail(f"this command must be run as {who}", 5)
     return None
 
 
@@ -70,40 +71,51 @@ def cmd_configure(args: argparse.Namespace) -> int:
     return 0
 
 
+def _service_module():
+    """The platform service-control module (Windows SCM or macOS launchd)."""
+    if IS_MACOS:
+        from .service import launchd
+
+        return launchd
+    from .service import control
+
+    return control
+
+
 def cmd_service(action: str) -> int:
     if (rc := _require_admin()) is not None:
         return rc
-    from .service import control
+    if not (IS_WINDOWS or IS_MACOS):
+        return _fail("service management is only available on Windows and macOS; use `run` for development")
+    svc = _service_module()
 
     try:
         if action == "install":
-            control.install()
+            svc.install()
             print(f"{SERVICE_NAME} installed (automatic start).")
         elif action == "uninstall":
-            control.uninstall()
+            svc.uninstall()
             print(f"{SERVICE_NAME} removed.")
         elif action == "start":
-            state = control.start()
+            state = svc.start()
             print(state)
             return 0 if state == "RUNNING" else 3
         elif action == "stop":
-            state = control.stop()
+            state = svc.stop()
             print(state)
-            return 0 if state == "STOPPED" else 3
-    except control.ServiceControlError as e:
+            return 0 if state in ("STOPPED", "NOT_INSTALLED") else 3
+    except svc.ServiceControlError as e:
         return _fail(str(e))
-    except Exception as e:  # pywintypes.error
+    except Exception as e:  # pywintypes.error / OSError
         return _fail(f"{action} failed: {e}")
     return 0
 
 
 def cmd_status(args: argparse.Namespace) -> int:
     out: dict = {"agent_version": AGENT_VERSION}
-    if IS_WINDOWS:
-        from .service import control
-
+    if IS_WINDOWS or IS_MACOS:
         try:
-            out["service_state"] = control.query_state()
+            out["service_state"] = _service_module().query_state()
         except Exception as e:
             out["service_state"] = f"unknown ({e.__class__.__name__})"
     try:
@@ -123,10 +135,19 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    import signal
+
     from .service.host import run_agent
 
     stop = threading.Event()
-    print("Running in the foreground; press Ctrl+C to stop.", file=sys.stderr)
+    # macOS launchd (and Linux systemd) stop the daemon with SIGTERM; honour it so the
+    # agent shuts down cleanly and leaves enforcement state unchanged.
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, lambda *_: stop.set())
+        except (ValueError, OSError):  # pragma: no cover - not in main thread
+            pass
+    print("Running in the foreground; press Ctrl+C or send SIGTERM to stop.", file=sys.stderr)
     try:
         run_agent(stop, console=True)
     except KeyboardInterrupt:
@@ -148,7 +169,7 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--no-verify-tls", action="store_true", help="disable TLS verification (NOT for production)")
     c.add_argument("--reset-enrollment", action="store_true", help="discard the device credential and enroll again")
     for name in ("install", "uninstall", "start", "stop"):
-        sub.add_parser(name, help=f"{name} the Windows Service")
+        sub.add_parser(name, help=f"{name} the background service (Windows Service / macOS launchd)")
     sub.add_parser("status", help="show service and agent state")
     sub.add_parser("run", help="run the agent in the foreground (debug)")
     return p

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchDaemon template for the SoftProIt.network.conducted background service on macOS.
+
+  Install location: /Library/LaunchDaemons/com.softproit.network.conducted.plist
+  Owner/perms:      root:wheel, 0644
+  Load:             sudo launchctl bootstrap system /Library/LaunchDaemons/com.softproit.network.conducted.plist
+  Unload:           sudo launchctl bootout   system /Library/LaunchDaemons/com.softproit.network.conducted.plist
+
+  `SoftProIt.network.conducted install` (run as root) writes this file for you with
+  the real installed binary path substituted in and then bootstraps it.
+
+  Adjust the ProgramArguments path to wherever the .pkg installs the binary, e.g.
+  /usr/local/softproit/SoftProIt.network.conducted/SoftProIt.network.conducted
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.softproit.network.conducted</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/softproit/SoftProIt.network.conducted/SoftProIt.network.conducted</string>
+        <string>run</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>/Library/Application Support/OrganizationNetworkAgent/logs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Library/Application Support/OrganizationNetworkAgent/logs/launchd.err.log</string>
+</dict>
+</plist>

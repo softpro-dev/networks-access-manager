@@ -17,6 +17,8 @@ from nam_agent.policy.canonical import content_sha256, make_etag
 BASE_URL = "https://mgmt.example.test/api"
 REG_TOKEN = "reg-token-0123456789"
 ORG = "INST-001"
+# Organization service access token (contract §4.2, org-token mode).
+ACCESS_TOKEN = "nat_" + "a" * 43
 
 EXAMPLE_CONTENT = {
     "enabled": True,
@@ -69,6 +71,10 @@ class FakeServer:
     def __init__(self) -> None:
         self.devices: dict[str, Device] = {}
         self.assignment: Assignment | None = None
+        # Org-token mode (contract §4.2): merged organization-wide policy.
+        self.org_assignment: Assignment | None = None
+        self.access_token: str = ACCESS_TOKEN
+        self.org_policy_downloads: list[dict] = []
         self.down = False
         self.fail_5xx = False
         self.health_ok = True
@@ -97,6 +103,26 @@ class FakeServer:
     def assign(self, policy_id: str, version: int, content: dict | None = None, **kw: Any) -> Assignment:
         self.assignment = Assignment(policy_id, version, copy.deepcopy(content or EXAMPLE_CONTENT), **kw)
         return self.assignment
+
+    def assign_org(self, version: int = 1, content: dict | None = None, policy_id: str = "EFFECTIVE", **kw: Any) -> Assignment:
+        self.org_assignment = Assignment(policy_id, version, copy.deepcopy(content or EXAMPLE_CONTENT), **kw)
+        return self.org_assignment
+
+    def org_document(self) -> dict:
+        a = self.org_assignment
+        assert a is not None
+        doc = {
+            "schema_version": 1,
+            "policy_id": a.policy_id,
+            "version": a.version,
+            "organization_id": ORG,
+            "assignment_scope": "ORGANIZATION",
+            "published_at": "2026-09-29T12:00:00.000Z",
+            "content_sha256": a.sha,
+            "content": a.content,
+        }
+        doc.update(a.doc_overrides)
+        return doc
 
     def device(self) -> Device:
         assert len(self.devices) == 1
@@ -139,6 +165,8 @@ class FakeServer:
             return self.register(request)
         if route == ("GET", "/agent/registration-status"):
             return self.registration_status(request)
+        if route == ("GET", "/agent/org-policy"):
+            return self.org_policy(request)
         dev_or_resp = self.authenticate(request)
         if isinstance(dev_or_resp, httpx.Response):
             return dev_or_resp
@@ -175,6 +203,20 @@ class FakeServer:
             self.acks.append(body)
             return httpx.Response(204)
         return err(404, "NOT_FOUND")
+
+    def org_policy(self, request: httpx.Request) -> httpx.Response:
+        auth = request.headers.get("authorization", "")
+        if auth != f"Bearer {self.access_token}":
+            return err(401, "INVALID_ACCESS_TOKEN")
+        if self.org_assignment is None:
+            return err(404, "NO_POLICY_ASSIGNED")
+        a = self.org_assignment
+        inm = request.headers.get("if-none-match")
+        self.org_policy_downloads.append({"if_none_match": inm})
+        if inm == a.etag:
+            return httpx.Response(304, headers={"etag": a.etag})
+        body = a.raw_body if a.raw_body is not None else json.dumps(self.org_document()).encode()
+        return httpx.Response(200, content=body, headers={"etag": a.etag, "content-type": "application/json"})
 
     def register(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)

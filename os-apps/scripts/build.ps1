@@ -1,9 +1,13 @@
 <#
 .SYNOPSIS
-  Build OrganizationNetworkAgent.exe (PyInstaller onedir) and, optionally, the Inno Setup installer.
+  Build BOTH Windows executables (PyInstaller onedir) and, optionally, the Inno Setup
+  installer:
+    - SoftProIt.network.conducted.exe  (the background service)
+    - SoftProIt.network.admin.exe      (the desktop admin-console wrapper)
 .NOTES
   Must run on Windows 10/11 x64 with 64-bit Python 3.11+ on PATH (py launcher).
   PyInstaller does not cross-compile: a macOS/Linux build cannot produce the .exe.
+  The admin app uses the Edge WebView2 runtime at run time (ship/require it separately).
 #>
 [CmdletBinding()]
 param(
@@ -36,13 +40,19 @@ if (-not $SkipTests) {
 }
 
 Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
-& $py -m PyInstaller --noconfirm --clean OrganizationNetworkAgent.spec
-if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
-$exe = Join-Path $Root "dist\OrganizationNetworkAgent\OrganizationNetworkAgent.exe"
-& $exe --version
-if ($LASTEXITCODE -ne 0) { throw "built executable does not start" }
-Write-Host "Built $exe"
+& $py -m PyInstaller --noconfirm --clean "SoftProIt.network.conducted.spec"
+if ($LASTEXITCODE -ne 0) { throw "PyInstaller (conducted) failed" }
+& $py -m PyInstaller --noconfirm --clean "SoftProIt.network.admin.spec"
+if ($LASTEXITCODE -ne 0) { throw "PyInstaller (admin) failed" }
+
+$svcExe = Join-Path $Root "dist\SoftProIt.network.conducted\SoftProIt.network.conducted.exe"
+& $svcExe --version
+if ($LASTEXITCODE -ne 0) { throw "built service executable does not start" }
+$adminExe = Join-Path $Root "dist\SoftProIt.network.admin\SoftProIt.network.admin.exe"
+& $adminExe --version
+if ($LASTEXITCODE -ne 0) { throw "built admin executable does not start" }
+Write-Host "Built:`n  $svcExe`n  $adminExe"
 
 if ($Installer) {
   $iscc = @(
