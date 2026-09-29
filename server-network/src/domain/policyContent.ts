@@ -1,11 +1,12 @@
 /** Policy content schema (contract §4) and validator. */
 import { z } from 'zod';
-import { decide, validateDomainPattern } from './domainPattern.js';
+import { decide, validateDomainPattern, type RedirectRule } from './domainPattern.js';
 import { validateIpOrCidr } from './ipCidr.js';
 import { canonicalSha256 } from './canonicalJson.js';
 
 export const MAX_DOMAIN_ENTRIES = 5000;
 export const MAX_IP_ENTRIES = 1000;
+export const MAX_REDIRECT_ENTRIES = 1000;
 
 export interface PolicyContent {
   enabled: boolean;
@@ -17,6 +18,8 @@ export interface PolicyContent {
   block_dot: boolean;
   block_doh: boolean;
   enforce_browser_policies: boolean;
+  /** Optional; omitted from stored/hashed content when empty so older content hashes are unchanged. */
+  redirect_rules?: RedirectRule[];
 }
 
 export const DEFAULT_POLICY_CONTENT: Readonly<PolicyContent> = Object.freeze({
@@ -49,6 +52,23 @@ const ipEntry = z.string().transform((s, ctx) => {
   return r.value;
 });
 
+/** Redirect target: an exact hostname (no wildcard). */
+const hostEntry = z.string().transform((s, ctx) => {
+  const r = validateDomainPattern(s);
+  if (!r.ok || r.value.startsWith('*.')) {
+    ctx.addIssue({ code: 'custom', message: `"${s.slice(0, 80)}": ${r.ok ? 'redirect target must be an exact hostname, not a wildcard' : r.error}` });
+    return z.NEVER;
+  }
+  return r.value;
+});
+
+const redirectEntry = z
+  .object({ from: domainEntry, to: hostEntry })
+  .strict()
+  .superRefine((r, ctx) => {
+    if (r.from === r.to) ctx.addIssue({ code: 'custom', message: `"${r.from}" cannot redirect to itself`, path: ['to'] });
+  });
+
 /**
  * Input schema: unknown keys rejected, every field optional with the contract default.
  * Output is the full 9-field, normalized (A-label) content object that gets stored and hashed.
@@ -64,6 +84,7 @@ export const policyContentSchema = z
     block_dot: z.boolean().default(true),
     block_doh: z.boolean().default(true),
     enforce_browser_policies: z.boolean().default(true),
+    redirect_rules: z.array(redirectEntry).max(MAX_REDIRECT_ENTRIES).optional(),
   })
   .strict();
 
@@ -92,6 +113,7 @@ export function orderContent(c: PolicyContent): PolicyContent {
     block_dot: c.block_dot,
     block_doh: c.block_doh,
     enforce_browser_policies: c.enforce_browser_policies,
+    ...(c.redirect_rules && c.redirect_rules.length > 0 ? { redirect_rules: c.redirect_rules.map((r) => ({ from: r.from, to: r.to })) } : {}),
   };
 }
 
@@ -107,6 +129,18 @@ export function computeWarnings(c: PolicyContent, managementHosts: readonly stri
   dupes(c.allowed_domains, 'allowed_domains');
   dupes(c.blocked_domains, 'blocked_domains');
   dupes(c.blocked_ips, 'blocked_ips');
+
+  const redirects = c.redirect_rules ?? [];
+  const seenFrom = new Map<string, string>();
+  redirects.forEach((r, i) => {
+    const prev = seenFrom.get(r.from);
+    if (prev !== undefined && prev !== r.to) warnings.push({ path: `redirect_rules.${i}`, message: `"${r.from}" redirects to both "${prev}" and "${r.to}"; the first rule wins` });
+    if (!seenFrom.has(r.from)) seenFrom.set(r.from, r.to);
+    const target = decide(r.to, { ...c, redirect_rules: [] }, []);
+    if (target.action === 'block' && target.list === 'blocked') {
+      warnings.push({ path: `redirect_rules.${i}.to`, message: `target "${r.to}" is blocked by "${target.pattern}"; redirect targets are always allowed` });
+    }
+  });
 
   const allowed = new Set(c.allowed_domains);
   c.blocked_domains.forEach((v, i) => {

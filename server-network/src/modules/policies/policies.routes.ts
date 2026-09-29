@@ -31,6 +31,13 @@ export async function policyRoutes(app: FastifyInstance) {
     svc.rollbackPolicy(ctx, getAdmin(req), id(req.params), parse(svc.rollbackBody, req.body).version, req.ip),
   );
 
+  app.put('/api/policies/:id/content', { bodyLimit: LARGE_BODY }, async (req) =>
+    svc.saveAndPublish(ctx, getAdmin(req), id(req.params), parse(svc.saveContentBody, req.body).content, req.ip),
+  );
+  app.get('/api/assignments', async (req) => svc.listOrgAssignments(ctx, getAdmin(req), parse(svc.orgAssignmentsQuery, req.query, 'Query')));
+  app.post('/api/assignments/bulk', async (req, reply) =>
+    reply.code(201).send(await svc.bulkAssign(ctx, getAdmin(req), parse(svc.bulkAssignBody, req.body), req.ip)),
+  );
   app.get('/api/policies/:id/versions', async (req) => svc.listVersions(ctx, getAdmin(req), id(req.params)));
   app.post('/api/policies/:id/versions', async (req, reply) =>
     reply.code(201).send(await svc.createDraftVersion(ctx, getAdmin(req), id(req.params), parse(svc.newVersionBody, req.body ?? {}), req.ip)),

@@ -20,8 +20,9 @@ export function relTime(iso: string | null | undefined, now = Date.now()): strin
   return future ? `in ${v}` : `${v} ago`;
 }
 
-export function deviceName(d: { display_name: string | null; hostname: string }): string {
-  return d.display_name || d.hostname;
+/** Title given by an admin, else the agent-reported hostname, else the MAC (pre-registered computers). */
+export function deviceName(d: { display_name: string | null; hostname: string | null; mac_address?: string | null }): string {
+  return d.display_name || d.hostname || d.mac_address || 'Unnamed computer';
 }
 
 export function plural(n: number, word: string): string {

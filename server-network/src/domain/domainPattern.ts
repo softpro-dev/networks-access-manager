@@ -111,49 +111,74 @@ export function isManagementHost(name: string, managementHosts: readonly string[
   return false;
 }
 
+export interface RedirectRule {
+  /** domain pattern (same syntax as the domain lists) */
+  from: string;
+  /** exact target hostname */
+  to: string;
+}
+
 export interface DecisionContent {
   enabled?: boolean;
   default_action: 'allow' | 'block';
   allowed_domains: readonly string[];
   blocked_domains: readonly string[];
+  redirect_rules?: readonly RedirectRule[];
 }
 
 export interface Decision {
-  action: 'allow' | 'block';
+  action: 'allow' | 'block' | 'redirect';
   reason: 'management' | 'rule' | 'tie' | 'default' | 'disabled' | 'invalid_name';
   pattern?: string;
-  list?: 'allowed' | 'blocked';
+  list?: 'allowed' | 'blocked' | 'redirect';
+  /** redirect target when action is "redirect" */
+  target?: string;
 }
+
+// On equal specificity: block beats redirect beats allow.
+const TIE_RANK = { blocked: 3, redirect: 2, allowed: 1 } as const;
 
 /**
  * Decision for a queried name (contract §5). Patterns are assumed normalized (as stored).
- * The server never filters traffic; this powers the validator and the preview endpoint.
+ * The most specific matching rule wins; ties resolve block > redirect > allow.
+ * Redirect targets are always allowed. The server never filters traffic; this powers the
+ * validator and the preview endpoint.
  */
 export function decide(nameInput: string, content: DecisionContent, managementHosts: readonly string[] = []): Decision {
   const name = normalizeQueryName(nameInput);
   if (name === null) return { action: content.default_action, reason: 'invalid_name' };
   if (isManagementHost(name, managementHosts)) return { action: 'allow', reason: 'management' };
   if (content.enabled === false) return { action: 'allow', reason: 'disabled' };
+  const redirects = content.redirect_rules ?? [];
+  if (redirects.some((r) => r.to === name)) return { action: 'allow', reason: 'rule', pattern: name, list: 'allowed' };
 
-  let bestAllow: { p: string; s: [number, number] } | null = null;
-  let bestBlock: { p: string; s: [number, number] } | null = null;
-  for (const p of content.allowed_domains) {
-    if (patternMatches(p, name)) {
-      const s = specificity(p);
-      if (!bestAllow || compareSpec(s, bestAllow.s) > 0) bestAllow = { p, s };
+  type Hit = { p: string; s: [number, number]; list: keyof typeof TIE_RANK; target?: string };
+  let best: Hit | null = null;
+  let tied = false;
+  const consider = (p: string, list: Hit['list'], target?: string) => {
+    if (!patternMatches(p, name)) return;
+    const hit: Hit = { p, s: specificity(p), list, target };
+    if (!best) {
+      best = hit;
+      return;
     }
-  }
-  for (const p of content.blocked_domains) {
-    if (patternMatches(p, name)) {
-      const s = specificity(p);
-      if (!bestBlock || compareSpec(s, bestBlock.s) > 0) bestBlock = { p, s };
+    const cmp = compareSpec(hit.s, best.s);
+    if (cmp > 0) {
+      best = hit;
+      tied = false;
+    } else if (cmp === 0 && hit.list !== best.list) {
+      tied = true;
+      if (TIE_RANK[hit.list] > TIE_RANK[best.list]) best = hit;
     }
-  }
-  if (!bestAllow && !bestBlock) return { action: content.default_action, reason: 'default' };
-  if (bestAllow && !bestBlock) return { action: 'allow', reason: 'rule', pattern: bestAllow.p, list: 'allowed' };
-  if (bestBlock && !bestAllow) return { action: 'block', reason: 'rule', pattern: bestBlock.p, list: 'blocked' };
-  const cmp = compareSpec(bestAllow!.s, bestBlock!.s);
-  if (cmp > 0) return { action: 'allow', reason: 'rule', pattern: bestAllow!.p, list: 'allowed' };
-  if (cmp < 0) return { action: 'block', reason: 'rule', pattern: bestBlock!.p, list: 'blocked' };
-  return { action: 'block', reason: 'tie', pattern: bestBlock!.p, list: 'blocked' };
+  };
+  for (const p of content.allowed_domains) consider(p, 'allowed');
+  for (const p of content.blocked_domains) consider(p, 'blocked');
+  for (const r of redirects) consider(r.from, 'redirect', r.to);
+
+  const b = best as Hit | null;
+  if (!b) return { action: content.default_action, reason: 'default' };
+  const reason = tied ? 'tie' : 'rule';
+  if (b.list === 'allowed') return { action: 'allow', reason, pattern: b.p, list: 'allowed' };
+  if (b.list === 'blocked') return { action: 'block', reason, pattern: b.p, list: 'blocked' };
+  return { action: 'redirect', reason, pattern: b.p, list: 'redirect', target: b.target };
 }

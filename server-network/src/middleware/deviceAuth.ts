@@ -23,6 +23,8 @@ export function deviceAuth(ctx: AppContext) {
     const device = cred.device;
     if (cred.organizationId !== device.organizationId) throw invalid();
     if (device.status !== 'APPROVED') throw new AppError(403, 'DEVICE_NOT_APPROVED', 'Device is not approved');
+    // An approved device always went through registration, so it has a uuid; treat anything else as invalid.
+    if (!device.deviceUuid) throw invalid();
     if (device.organization.status !== 'ACTIVE') throw new AppError(403, 'DEVICE_NOT_APPROVED', 'Organization is not active');
 
     if (!cred.lastUsedAt || now.getTime() - cred.lastUsedAt.getTime() > LAST_USED_WRITE_INTERVAL_MS) {

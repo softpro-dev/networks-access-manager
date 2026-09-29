@@ -32,3 +32,16 @@ on 429/5xx is honoured. Redirects are never followed.
 6. Every domain pattern (§5) and IP/CIDR entry
 7. Management host known; warning if the policy would block it (the exception overrides)
 8. Enforcement-configuration warnings (block-all, allow/block overlap)
+
+## Merged per-computer policy
+
+The server merges every restriction assigned to this computer (organization-wide, via its groups,
+and directly) into one document with `policy_id: "EFFECTIVE"` and `assignment_scope: "MERGED"`
+(contract §4.1). The agent treats it like any other policy: the version is a per-computer counter,
+so "version changed → download → validate → apply → ack" is unchanged. Two additive fields are
+accepted and validated strictly:
+
+- `sources` — diagnostic list of contributing restrictions (`code`, `kind`, `version`, `via`).
+- `content.redirect_rules` — `[{from, to}]`; `from` is a domain pattern, `to` an exact hostname.
+  Decision order: most specific rule wins; ties resolve block > redirect > allow; redirect
+  targets are always allowed. Omitted by the server when empty.

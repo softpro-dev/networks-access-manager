@@ -7,6 +7,7 @@ import { groupRoutes } from '../modules/groups/groups.routes.js';
 import { policyRoutes } from '../modules/policies/policies.routes.js';
 import { auditRoutes } from '../modules/audit/audit.routes.js';
 import { agentRoutes } from '../modules/agents/agents.routes.js';
+import { analyticsRoutes } from '../modules/analytics/analytics.routes.js';
 
 const escapeHtml = (v: string) =>
   v.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -38,4 +39,5 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(policyRoutes);
   await app.register(auditRoutes);
   await app.register(agentRoutes);
+  await app.register(analyticsRoutes);
 }

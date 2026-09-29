@@ -5,6 +5,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { useAuth } from '@/lib/auth';
 import { useOrganizations } from '@/lib/queries';
 import { Badge, Button, Spinner } from '@/components/ui';
+import { OrgPicker } from '@/components/OrgPicker';
 
 interface NavItem {
   href: string;
@@ -29,9 +30,9 @@ export default function ConsoleLayout({ children }: { children: ReactNode }) {
   const ownOrg = !isSuper ? orgs.data?.items.find((o) => o.id === user.organization_id) : undefined;
   const nav: NavItem[] = [
     { href: '/', label: 'Dashboard' },
-    { href: '/devices', label: 'Devices' },
-    { href: '/groups', label: 'Device groups' },
-    { href: '/policies', label: 'Policies' },
+    { href: '/computers', label: 'Computers' },
+    { href: '/restrictions', label: 'Restrictions' },
+    { href: '/access', label: 'Set access' },
     { href: '/audit', label: 'Audit log' },
     isSuper ? { href: '/organizations', label: 'Organizations' } : { href: `/organizations/${user.organization_id}`, label: 'Organization' },
     { href: '/users', label: 'Administrators' },
@@ -61,6 +62,12 @@ export default function ConsoleLayout({ children }: { children: ReactNode }) {
           <button type="button" className="icon-btn menu-btn" aria-label="Open menu" onClick={() => setMenuOpen((v) => !v)}>
             ☰
           </button>
+          {isSuper && (
+            <label className="topbar-org">
+              <span className="muted small">Organization</span>
+              <OrgPicker />
+            </label>
+          )}
           <div className="topbar-spacer" />
           <div className="whoami">
             <div className="whoami-text">
@@ -72,7 +79,6 @@ export default function ConsoleLayout({ children }: { children: ReactNode }) {
                     {ownOrg ? `${ownOrg.code} · ${ownOrg.name}` : user.organization_code}
                   </span>
                 )}
-                {isSuper && <span className="muted">All organizations</span>}
               </span>
             </div>
             <Button size="sm" onClick={() => void logout()}>

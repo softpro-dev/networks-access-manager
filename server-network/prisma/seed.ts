@@ -1,6 +1,7 @@
 /**
- * Development seed: 3 organizations, one SUPER_ADMIN, one ORGANIZATION_ADMIN per org, and a sample
- * policy POL-001 per org (published v1 + ORGANIZATION assignment). Idempotent (upserts).
+ * Development seed: 3 organizations, one SUPER_ADMIN, one ORGANIZATION_ADMIN per org, and per org a
+ * "Lab computers" group with two pre-added computers plus one restriction of each type (Black List
+ * org-wide, Redirection on the group, Allow Only unassigned). Idempotent.
  * Passwords come from env or are generated randomly and printed ONCE to stdout.
  */
 import { PrismaClient, type Prisma } from '@prisma/client';
@@ -42,16 +43,48 @@ async function upsertUser(email: string, role: 'SUPER_ADMIN' | 'ORGANIZATION_ADM
   return prisma.user.create({ data: { email, role, organizationId, passwordHash: await hashPassword(password()), name: role === 'SUPER_ADMIN' ? 'Super Admin' : 'Organization Admin' } });
 }
 
+/** Create a published restriction once (idempotent by code). */
+async function restriction(organizationId: string, userId: string, code: string, name: string, kind: 'ALLOW_ONLY' | 'BLACKLIST' | 'REDIRECT', input: object) {
+  const existing = await prisma.policy.findUnique({ where: { organizationId_code: { organizationId, code } } });
+  if (existing) return existing;
+  const v = validatePolicyContent(input);
+  if (!v.content || !v.content_sha256) throw new Error(`seed restriction ${code} invalid: ${JSON.stringify(v.errors)}`);
+  return prisma.$transaction(async (tx) => {
+    const policy = await tx.policy.create({ data: { organizationId, code, name, kind, description: 'Sample restriction created by the seed script' } });
+    const v1 = await tx.policyVersion.create({
+      data: { policyId: policy.id, version: 1, status: 'PUBLISHED', content: v.content as unknown as Prisma.InputJsonValue, contentSha256: v.content_sha256, publishedAt: new Date(), publishedById: userId },
+    });
+    return tx.policy.update({ where: { id: policy.id }, data: { activeVersionId: v1.id } });
+  });
+}
+
+async function assignOnce(policyId: string, organizationId: string, scope: 'ORGANIZATION' | 'GROUP', targetGroupId: string | null, userId: string) {
+  const exists = await prisma.policyAssignment.findFirst({ where: { policyId, scope, targetGroupId } });
+  if (!exists) await prisma.policyAssignment.create({ data: { policyId, organizationId, scope, targetGroupId, priority: 0, createdById: userId } });
+}
+
+/**
+ * Older seeds created POL-001 with both allowed and blocked domains. Restrictions now have one type,
+ * so publish a new Black List version of it without the allowed list (history is kept).
+ */
+async function upgradeLegacyPolicy(organizationId: string, userId: string) {
+  const legacy = await prisma.policy.findUnique({ where: { organizationId_code: { organizationId, code: 'POL-001' } }, include: { activeVersion: true } });
+  const c = legacy?.activeVersion?.content as { allowed_domains?: string[] } | undefined;
+  if (!legacy || legacy.kind !== 'BLACKLIST' || !c?.allowed_domains?.length) return;
+  const v = validatePolicyContent({ ...c, allowed_domains: [] });
+  if (!v.content || !v.content_sha256) return;
+  const latest = await prisma.policyVersion.findFirst({ where: { policyId: legacy.id }, orderBy: { version: 'desc' } });
+  await prisma.$transaction(async (tx) => {
+    const nv = await tx.policyVersion.create({
+      data: { policyId: legacy.id, version: (latest?.version ?? 0) + 1, status: 'PUBLISHED', content: v.content as unknown as Prisma.InputJsonValue, contentSha256: v.content_sha256, publishedAt: new Date(), publishedById: userId },
+    });
+    await tx.policy.update({ where: { id: legacy.id }, data: { activeVersionId: nv.id, name: 'Baseline black list' } });
+  });
+}
+
 async function main() {
   const superEmail = (process.env.SEED_SUPER_ADMIN_EMAIL ?? 'superadmin@example.com').toLowerCase();
   const superAdmin = await upsertUser(superEmail, 'SUPER_ADMIN', null, () => passwordFor('SEED_SUPER_ADMIN_PASSWORD', superEmail));
-
-  const content = validatePolicyContent({
-    allowed_domains: ['company.com', '*.company.com'],
-    blocked_domains: ['example.com', '*.example.com'],
-    blocked_ips: ['203.0.113.0/24', '2001:db8::/32'],
-  });
-  if (!content.content || !content.content_sha256) throw new Error('seed policy invalid');
 
   for (const o of ORGS) {
     const org = await prisma.organization.upsert({ where: { code: o.code }, update: {}, create: { code: o.code, name: o.name } });
@@ -59,25 +92,35 @@ async function main() {
     await upsertUser(o.admin, 'ORGANIZATION_ADMIN', org.id, () =>
       passwordFor(process.env[o.env] ? o.env : 'SEED_ORG_ADMIN_PASSWORD', o.admin),
     );
+    await upgradeLegacyPolicy(org.id, superAdmin.id);
 
-    const existing = await prisma.policy.findUnique({ where: { organizationId_code: { organizationId: org.id, code: 'POL-001' } } });
-    if (existing) continue;
-    await prisma.$transaction(async (tx) => {
-      const policy = await tx.policy.create({ data: { organizationId: org.id, code: 'POL-001', name: 'Baseline policy', description: 'Sample policy created by the seed script' } });
-      const v1 = await tx.policyVersion.create({
-        data: {
-          policyId: policy.id,
-          version: 1,
-          status: 'PUBLISHED',
-          content: content.content as unknown as Prisma.InputJsonValue,
-          contentSha256: content.content_sha256,
-          publishedAt: new Date(),
-          publishedById: superAdmin.id,
-        },
-      });
-      await tx.policy.update({ where: { id: policy.id }, data: { activeVersionId: v1.id } });
-      await tx.policyAssignment.create({ data: { policyId: policy.id, organizationId: org.id, scope: 'ORGANIZATION', priority: 0, createdById: superAdmin.id } });
+    const group = await prisma.deviceGroup.upsert({
+      where: { organizationId_name: { organizationId: org.id, name: 'Lab computers' } },
+      update: {},
+      create: { organizationId: org.id, name: 'Lab computers', description: 'Sample group created by the seed script' },
     });
+    // Locally administered (02:…) sample MACs: pre-added computers waiting for their agent.
+    for (const [i, title] of ['Lab PC 01', 'Lab PC 02'].entries()) {
+      const mac = `02:00:00:${o.code.slice(0, 2).toUpperCase().charCodeAt(0).toString(16).padStart(2, '0').toUpperCase()}:00:0${i + 1}`;
+      const exists = await prisma.device.findFirst({ where: { organizationId: org.id, macAddress: mac } });
+      if (!exists) {
+        await prisma.device.create({
+          data: { organizationId: org.id, status: 'PRE_REGISTERED', macAddress: mac, displayName: title, serialNumber: `SN-${o.code}-${i + 1}`, memberships: { create: { groupId: group.id } } },
+        });
+      }
+    }
+
+    const social = await restriction(org.id, superAdmin.id, 'RST-001', 'Social media & games', 'BLACKLIST', {
+      blocked_domains: ['facebook.com', '*.facebook.com', 'tiktok.com', '*.tiktok.com', 'example-games.com', '*.example-games.com'],
+    });
+    await restriction(org.id, superAdmin.id, 'RST-002', 'Exam mode (allow only)', 'ALLOW_ONLY', {
+      allowed_domains: ['company.com', '*.company.com', 'wikipedia.org', '*.wikipedia.org'],
+    });
+    const redirect = await restriction(org.id, superAdmin.id, 'RST-003', 'Games → learning portal', 'REDIRECT', {
+      redirect_rules: [{ from: '*.example-games.net', to: 'learn.company.com' }],
+    });
+    await assignOnce(social.id, org.id, 'ORGANIZATION', null, superAdmin.id);
+    await assignOnce(redirect.id, org.id, 'GROUP', group.id, superAdmin.id);
   }
 
   console.log('Seed complete: organizations', ORGS.map((o) => o.code).join(', '));

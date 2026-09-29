@@ -242,7 +242,12 @@ version)` is not the one currently assigned to the device.
 }
 ```
 
-* `assignment_scope` ∈ `DEVICE | GROUP | ORGANIZATION` (which assignment won).
+* `assignment_scope` ∈ `DEVICE | GROUP | ORGANIZATION | MERGED`. The server now always sends the
+  merged per-computer policy (§4.1) with `policy_id: "EFFECTIVE"` and `assignment_scope: "MERGED"`;
+  the example above keeps its original values because it is the shared hash test vector.
+* `sources` (optional, diagnostics only): `[{ "code", "kind", "version", "via": [...] }]` — the
+  restrictions that were merged. `kind` ∈ `ALLOW_ONLY | BLACKLIST | REDIRECT`, `via` ⊆
+  `DEVICE | GROUP | ORGANIZATION`. Unknown keys rejected. Never contains user activity.
 * `content_sha256` = SHA-256 hex of the **canonical JSON** of `content`:
   keys sorted lexicographically at every level, no insignificant whitespace,
   UTF-8, arrays kept in stored order. (Python: `json.dumps(c, sort_keys=True,
@@ -264,8 +269,33 @@ version)` is not the one currently assigned to the device.
 | `block_dot` | bool | `true` | Block outbound TCP+UDP/853 (DNS-over-TLS / DNS-over-QUIC). |
 | `block_doh` | bool | `true` | Sinkhole well-known DoH hostnames, block well-known DoH resolver IPs on 443, disable browser DoH via enterprise policy. |
 | `enforce_browser_policies` | bool | `true` | Write HKLM browser enterprise policies (DoH off, QUIC off). |
+| `redirect_rules` | `{from, to}[]` | absent | ≤ 1000 entries. `from` = domain pattern (§5), `to` = exact hostname (no wildcard, ≠ `from`). **Omitted by the server when empty**, so contents without redirects hash exactly as before; if present it is hashed as delivered. |
 
 Unknown keys → validation error on both sides.
+
+### 4.1 Merged per-computer policy (`policy_id: "EFFECTIVE"`)
+
+Admins create **restrictions** of one of three kinds and assign any number of them to the whole
+organization, to groups, and to individual computers. The server merges *every* active restriction
+that reaches a computer into one document:
+
+| Restriction kind | Contributes |
+|------------------|-------------|
+| `ALLOW_ONLY` | `allowed_domains`; **any** Allow Only makes `default_action: "block"` (allowlist mode) |
+| `BLACKLIST` | `blocked_domains`, `blocked_ips` |
+| `REDIRECT` | `redirect_rules`; same `from` in two restrictions → lowest restriction code wins. In allowlist mode every `to` is also added to `allowed_domains`. |
+
+Protocol flags are OR-ed across the merged restrictions. Lists are de-duplicated and sorted so the
+hash is stable. `version` is a per-computer counter that increases whenever the merged content hash
+changes (it never repeats for different content, including after a restriction rollback), so the
+agent's existing "version changed → download" rule keeps working. `status`/`ack` bodies use
+`policy_id: "EFFECTIVE"`.
+
+**Redirection limitation:** a name-level redirect cannot change what an HTTPS site presents; a
+browser that reaches the redirect target under the original name will show a certificate error.
+TLS interception is out of scope by design, so redirects are reliable only for plain HTTP or where a
+browser-level mechanism is used. The agent treats the rules as data; enforcement is a separate
+component.
 
 ---
 
@@ -299,15 +329,16 @@ Unknown keys → validation error on both sides.
 **Decision for a queried name:**
 
 1. If the name is the management server host (or a subdomain of it) → **ALLOW** (always; cannot be overridden).
-2. Collect every matching allowed and blocked pattern.
-3. The **most specific** match wins. Specificity key = `(label_count, is_exact)`
+2. If the name is exactly a redirect target (`to`) → **ALLOW**.
+3. Collect every matching allowed, blocked and redirect (`from`) pattern.
+4. The **most specific** match wins. Specificity key = `(label_count, is_exact)`
    compared descending, where `label_count` counts the `*` as a label
    (`*.example.com` = 3, `a.example.com` = 3, `example.com` = 2) and
    `is_exact` is 1 for non-wildcard patterns. Examples for name `a.example.com`:
    exact `a.example.com` (3,1) beats `*.example.com` (3,0). For name
    `x.b.example.com`: `*.b.example.com` (4,0) beats `*.example.com` (3,0).
-4. Tie between an allow and a block of equal specificity → **BLOCK**.
-5. No match → `default_action`.
+5. Tie between rules of equal specificity: **BLOCK > REDIRECT > ALLOW**.
+6. No match → `default_action`.
 
 A policy that would block the management host is still valid, but the
 management exception overrides it; the server's validator emits a warning.

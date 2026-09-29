@@ -49,12 +49,33 @@ Visiting the API origin itself (`http://localhost:$PORT/`) shows a small page li
   `/api/*` to the Fastify API (`API_URL`, default `http://localhost:$PORT`, where `PORT` is read from the
   real environment or — only that key — from `./.env`). Fastify remains the only backend and security
   authority; there are no Next API routes or server actions.
-* Pages: dashboard (device counts, pending approvals with quick approve/reject, stale heartbeats,
-  policy failures, recent audit), organizations (super admin; org admins see their own), administrators,
-  devices (+ detail with interfaces, credential metadata, approve/reject/revoke/re-enroll/rename), device
-  groups, policies (versions, draft editor with normalization preview, validate/publish/new version/
-  rollback/archive, activate/deactivate, assignments) and the audit log. Navigation and actions follow the
-  signed-in role; the API enforces RBAC regardless.
+* Menu (organization admin): **Dashboard · Computers · Restrictions · Set access · Audit log ·
+  Organization · Administrators**. Super admins get the same pages plus **Organizations**, with an
+  organization picker in the top bar (per tab) that scopes Dashboard, Computers, Restrictions and Set access.
+  - **Dashboard**: stat tiles and simple bar charts from `GET /api/analytics/overview` (computers by status,
+    restrictions by type, assignments by scope, group sizes), recent failures, pending approvals with quick
+    approve/reject. Super admin without a selected organization: totals, a per-organization table (click to
+    focus) and cross-organization bars.
+  - **Computers**: table with search/status/group filters; *Add computer* pre-registers one by MAC address
+    (normalized to `AA:BB:CC:DD:EE:FF`), title, optional serial and groups (a group can be created inline).
+    When the agent on that MAC registers it is linked automatically and still needs approval. Edit, delete,
+    approve/reject/revoke/re-enroll; detail page shows facts, credentials (metadata only) and the **effective
+    rules** (merged content + which restrictions contributed, via organization/group/direct). A *Groups* tab
+    manages groups; `/computers/groups/:id` manages members.
+  - **Restrictions** ("visiting rules of websites"): Allow Only, Black List (domains + optional IPs/CIDRs) or
+    Redirection (`from` pattern → `to` host) with live normalization preview; *Save & publish* creates a new
+    immutable version in one step ("no changes" when the content is unchanged); version history with rollback;
+    activate/deactivate. Restrictions cannot be deleted (history is kept).
+  - **Set access**: drag restriction cards (mouse, touch or keyboard via `@dnd-kit/core`) onto the whole
+    organization, a group, one computer or the selected computers; chips with × unassign. Optimistic updates
+    roll back on error. An *Assign…* dialog on each card is the non-drag alternative; *Rules* previews a
+    computer's merged effective rules.
+  - **Organizations** (super admin): *Copy login link* issues a single-use sign-in link (default 15 min) for the
+    organization's admin; with `?dev=true` **and** `ALLOW_ORGANIZATION_DELETE` on, a *Delete* action (type the
+    code to confirm) is shown.
+  - Old URLs (`/devices`, `/groups`, `/policies`, …) redirect to the new pages.
+* `/login?org_admin=<token>` removes the token from the address bar immediately, exchanges it via
+  `POST /api/auth/login-link` and continues like a password sign-in (the console sends `Referrer-Policy: no-referrer`).
 * The access token is kept in memory + `sessionStorage` (per tab, never `localStorage`) and sent as a
   Bearer token; any 401 or the JWT lifetime ending returns you to the sign-in page.
 * `next start` bakes the `/api` rewrite target at **build** time: rebuild after changing `API_URL`/`PORT`.
@@ -86,7 +107,7 @@ src/
   config/           Zod-validated env config (fails fast)
   domain/           pure logic: domain patterns, canonical JSON, ETag, policy schema, assignment resolution, RBAC, tokens
   middleware/       admin JWT+session auth, device credential auth
-  modules/          auth, organizations, users, devices, groups, policies, audit, agents (routes + services)
+  modules/          auth, organizations, users, devices, groups, policies, audit, agents, analytics (routes + services)
   services/         audit writer, password hashing, JWT, rate limiting, policy resolution
 prisma/             schema.prisma, migrations/, seed.ts
 tests/unit          no database

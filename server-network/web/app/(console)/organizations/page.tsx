@@ -1,19 +1,24 @@
 'use client';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { Suspense, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { useOrganizations } from '@/lib/queries';
 import { absTime } from '@/lib/format';
 import type { Organization } from '@/lib/types';
 import { Alert, Badge, Button, Empty, ErrorBox, PageHeader, Spinner, StatusBadge } from '@/components/ui';
-import { OrgFormDialog, OrgStatusDialog, RegistrationTokenControls } from '@/components/OrgDialogs';
+import { DeleteOrgDialog, LoginLinkButton, OrgFormDialog, OrgStatusDialog, RegistrationTokenControls } from '@/components/OrgDialogs';
 
-export default function OrganizationsPage() {
-  const { isSuper, user } = useAuth();
+function OrganizationsInner() {
+  const { isSuper, user, features } = useAuth();
+  const params = useSearchParams();
   const orgs = useOrganizations();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<Organization | null>(null);
   const [toggling, setToggling] = useState<Organization | null>(null);
+  const [deleting, setDeleting] = useState<Organization | null>(null);
+  // Deleting is a development tool: only with ?dev=true AND when the server allows it (ALLOW_ORGANIZATION_DELETE).
+  const canDelete = params.get('dev') === 'true' && features?.organization_delete === true;
 
   if (!isSuper) {
     return (
@@ -25,7 +30,7 @@ export default function OrganizationsPage() {
 
   return (
     <>
-      <PageHeader title="Organizations" subtitle="Tenants: every device, policy and group belongs to exactly one." actions={<Button variant="primary" onClick={() => setCreating(true)}>New organization</Button>} />
+      <PageHeader title="Organizations" subtitle="Tenants: every computer, restriction and group belongs to exactly one." actions={<Button variant="primary" onClick={() => setCreating(true)}>New organization</Button>} />
       {orgs.error && <ErrorBox error={orgs.error} />}
       {orgs.isLoading ? (
         <Spinner />
@@ -41,7 +46,9 @@ export default function OrganizationsPage() {
                 <th>Status</th>
                 <th>Registration token</th>
                 <th>Created</th>
-                <th />
+                <th>
+                  <span className="sr-only">Actions</span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -65,12 +72,18 @@ export default function OrganizationsPage() {
                   <td>{absTime(o.created_at)}</td>
                   <td className="cell-actions">
                     <div className="btn-row">
+                      <LoginLinkButton org={o} />
                       <Button size="sm" onClick={() => setEditing(o)}>
                         Edit
                       </Button>
                       <Button size="sm" variant={o.status === 'ACTIVE' ? 'danger' : 'secondary'} onClick={() => setToggling(o)}>
                         {o.status === 'ACTIVE' ? 'Disable' : 'Enable'}
                       </Button>
+                      {canDelete && (
+                        <Button size="sm" variant="danger" onClick={() => setDeleting(o)}>
+                          Delete
+                        </Button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -82,6 +95,15 @@ export default function OrganizationsPage() {
       <OrgFormDialog open={creating} onClose={() => setCreating(false)} />
       <OrgFormDialog open={!!editing} org={editing} onClose={() => setEditing(null)} />
       <OrgStatusDialog org={toggling} onClose={() => setToggling(null)} />
+      {canDelete && <DeleteOrgDialog org={deleting} onClose={() => setDeleting(null)} />}
     </>
+  );
+}
+
+export default function OrganizationsPage() {
+  return (
+    <Suspense fallback={<Spinner />}>
+      <OrganizationsInner />
+    </Suspense>
   );
 }

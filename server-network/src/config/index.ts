@@ -41,6 +41,9 @@ const envSchema = z
       .url()
       .refine((v) => /^https?:\/\//i.test(v), 'Must be an http(s) URL')
       .default('http://localhost:3001'),
+    /** Unset = allowed outside production. The console also hides the button unless ?dev=true. */
+    ALLOW_ORGANIZATION_DELETE: boolish.optional(),
+    LOGIN_LINK_TTL_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === 'production') {
@@ -79,6 +82,8 @@ export interface AppConfig {
   rateLimitEnabled: boolean;
   /** Public URL of the Next.js admin console (linked from GET /). */
   webPublicUrl: string;
+  allowOrganizationDelete: boolean;
+  loginLinkTtlMinutes: number;
 }
 
 function parseTrustProxy(raw: string): TrustProxy {
@@ -118,5 +123,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     loginLockoutMinutes: e.LOGIN_LOCKOUT_MINUTES,
     rateLimitEnabled: e.RATE_LIMIT_ENABLED,
     webPublicUrl: e.WEB_PUBLIC_URL,
+    allowOrganizationDelete: e.ALLOW_ORGANIZATION_DELETE ?? e.NODE_ENV !== 'production',
+    loginLinkTtlMinutes: e.LOGIN_LINK_TTL_MINUTES,
   };
 }

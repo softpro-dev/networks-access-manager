@@ -8,7 +8,8 @@ import { useAuth } from '@/lib/auth';
 import { absTime } from '@/lib/format';
 import type { Organization } from '@/lib/types';
 import { Badge, Button, Card, ErrorBox, KeyValue, Mono, PageHeader, Spinner, StatusBadge } from '@/components/ui';
-import { OrgFormDialog, OrgStatusDialog, RegistrationTokenControls } from '@/components/OrgDialogs';
+import { LoginLinkButton, OrgFormDialog, OrgStatusDialog, RegistrationTokenControls } from '@/components/OrgDialogs';
+import { setScopedOrg } from '@/lib/orgScope';
 
 export default function OrganizationDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -37,6 +38,7 @@ export default function OrganizationDetailPage() {
         actions={
           isSuper && (
             <>
+              <LoginLinkButton org={o} />
               <Button onClick={() => setEditing(true)}>Edit</Button>
               <Button variant={o.status === 'ACTIVE' ? 'danger' : 'secondary'} onClick={() => setToggling(true)}>
                 {o.status === 'ACTIVE' ? 'Disable' : 'Enable'}
@@ -46,16 +48,16 @@ export default function OrganizationDetailPage() {
         }
       />
       <div className="stat-grid">
-        <Link className="stat" href={isSuper ? `/devices?organization_id=${o.id}` : '/devices'}>
-          <span className="stat-label">Devices</span>
+        <Link className="stat" href={isSuper ? `/computers?organization_id=${o.id}` : '/computers'}>
+          <span className="stat-label">Computers</span>
           <span className="stat-value">{o.stats?.devices ?? '—'}</span>
         </Link>
-        <Link className="stat stat-pending" href={isSuper ? `/devices?organization_id=${o.id}&status=PENDING` : '/devices?status=PENDING'}>
+        <Link className="stat stat-pending" href={isSuper ? `/computers?organization_id=${o.id}&status=PENDING` : '/computers?status=PENDING'}>
           <span className="stat-label">Pending approval</span>
           <span className="stat-value">{o.stats?.pending_devices ?? '—'}</span>
         </Link>
-        <Link className="stat" href="/policies">
-          <span className="stat-label">Policies</span>
+        <Link className="stat" href="/restrictions" onClick={() => isSuper && setScopedOrg(o.id)}>
+          <span className="stat-label">Restrictions</span>
           <span className="stat-value">{o.stats?.policies ?? '—'}</span>
         </Link>
       </div>

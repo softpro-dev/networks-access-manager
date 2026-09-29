@@ -25,6 +25,8 @@ enum UserStatus {
 }
 
 enum DeviceStatus {
+  /// added by an admin (MAC/title/serial); the agent has not registered yet
+  PRE_REGISTERED
   PENDING
   APPROVED
   REJECTED
@@ -35,6 +37,13 @@ enum PolicyVersionStatus {
   DRAFT
   PUBLISHED
   ARCHIVED
+}
+
+/// Restriction (website visiting rule) type
+enum RestrictionKind {
+  ALLOW_ONLY
+  BLACKLIST
+  REDIRECT
 }
 
 enum AssignmentScope {
@@ -93,6 +102,8 @@ model User {
   updatedAt           DateTime      @updatedAt
 
   sessions           Session[]
+  loginLinks         LoginLink[]        @relation("LoginLinkUser")
+  createdLoginLinks  LoginLink[]        @relation("LoginLinkCreatedBy")
   approvedDevices    Device[]           @relation("DeviceApprovedBy")
   publishedVersions  PolicyVersion[]    @relation("VersionPublishedBy")
   createdAssignments PolicyAssignment[] @relation("AssignmentCreatedBy")
@@ -118,12 +129,17 @@ model Device {
   id                   String       @id @default(cuid())
   organizationId       String
   organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  deviceUuid           String       @unique @db.Char(36)
+  /// null while PRE_REGISTERED (set when the agent registers)
+  deviceUuid           String?      @unique @db.Char(36)
+  /// admin-facing title ("Title" in the console)
   displayName          String?      @db.VarChar(200)
-  hostname             String       @db.VarChar(255)
-  windowsVersion       String       @db.VarChar(200)
-  agentVersion         String       @db.VarChar(50)
-  interfaces           Json
+  serialNumber         String?      @db.VarChar(100)
+  /// admin-entered MAC (AA:BB:CC:DD:EE:FF); identifier only, used to match a registering agent — never a secret
+  macAddress           String?      @db.Char(17)
+  hostname             String?      @db.VarChar(255)
+  windowsVersion       String?      @db.VarChar(200)
+  agentVersion         String?      @db.VarChar(50)
+  interfaces           Json?
   status               DeviceStatus @default(PENDING)
   /// sha256 hex of the agent's enrollment secret; nulled once the credential is claimed or on re-enroll
   enrollmentSecretHash String?      @db.Char(64)
@@ -142,11 +158,13 @@ model Device {
   createdAt            DateTime     @default(now())
   updatedAt            DateTime     @updatedAt
 
-  credentials  DeviceCredential[]
-  memberships  DeviceGroupMember[]
-  assignments  PolicyAssignment[]
-  policyStatus DevicePolicyStatus?
+  credentials     DeviceCredential[]
+  memberships     DeviceGroupMember[]
+  assignments     PolicyAssignment[]
+  policyStatus    DevicePolicyStatus?
+  effectivePolicy DeviceEffectivePolicy?
 
+  @@unique([organizationId, macAddress])
   @@index([organizationId, status])
   @@index([organizationId, createdAt])
 }
@@ -198,18 +216,19 @@ model DeviceGroupMember {
 }
 
 model Policy {
-  id              String         @id @default(cuid())
+  id              String          @id @default(cuid())
   organizationId  String
-  organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   /// wire policy_id, e.g. POL-001 (unique per organization)
-  code            String         @db.VarChar(32)
-  name            String         @db.VarChar(200)
-  description     String?        @db.VarChar(2000)
-  isActive        Boolean        @default(true)
-  activeVersionId String?        @unique
-  activeVersion   PolicyVersion? @relation("PolicyActiveVersion", fields: [activeVersionId], references: [id], onDelete: Restrict)
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  code            String          @db.VarChar(32)
+  name            String          @db.VarChar(200)
+  description     String?         @db.VarChar(2000)
+  kind            RestrictionKind @default(BLACKLIST)
+  isActive        Boolean         @default(true)
+  activeVersionId String?         @unique
+  activeVersion   PolicyVersion?  @relation("PolicyActiveVersion", fields: [activeVersionId], references: [id], onDelete: Restrict)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
 
   versions     PolicyVersion[]      @relation("PolicyVersions")
   assignments  PolicyAssignment[]
@@ -299,4 +318,34 @@ model AuditLog {
   @@index([organizationId, createdAt])
   @@index([action])
   @@index([createdAt])
+}
+
+/// Merged result of every restriction reaching a device. `version` increases whenever the merged
+/// content hash changes; this is what the agent receives as policy_id "EFFECTIVE".
+model DeviceEffectivePolicy {
+  id            String   @id @default(cuid())
+  deviceId      String   @unique
+  device        Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  version       Int
+  content       Json
+  contentSha256 String   @db.Char(64)
+  /// restrictions that contributed: [{policy_id, code, kind, version, via}]
+  sources       Json
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+/// One-time sign-in link issued by a super admin. Only the sha256 of the random token is stored.
+model LoginLink {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation("LoginLinkUser", fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique @db.Char(64)
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdById String?
+  createdBy   User?     @relation("LoginLinkCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
 }

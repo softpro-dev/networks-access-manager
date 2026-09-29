@@ -19,17 +19,20 @@ describeDb('policy lifecycle, assignment and agent sync', () => {
     h.app.inject({ method, url, headers: bearer(t), ...(payload !== undefined ? { payload: payload as object } : {}) });
 
   it('create → edit draft → publish → immutable → new version → rollback', async () => {
-    const c = await api('POST', '/api/policies', { name: 'Baseline', content: { blocked_domains: ['Example.com.'] } });
+    const c = await api('POST', '/api/policies', { name: 'Baseline', kind: 'BLACKLIST', content: { blocked_domains: ['Example.com.'] } });
     expect(c.statusCode).toBe(201);
     const p = c.json();
-    expect(p.code).toBe('POL-001');
+    expect(p).toMatchObject({ code: 'POL-001', kind: 'BLACKLIST' });
     expect(p.versions).toEqual([expect.objectContaining({ version: 1, status: 'DRAFT' })]);
 
     const bad = await api('PUT', `/api/policies/${p.id}/versions/1`, { content: { blocked_domains: ['1.2.3.4'], extra: 1 } });
     expect(bad.statusCode).toBe(400);
-    const edit = await api('PUT', `/api/policies/${p.id}/versions/1`, { content: { blocked_domains: ['example.com', '*.example.com'], allowed_domains: ['bücher.de'] } });
+    const wrongKind = await api('PUT', `/api/policies/${p.id}/versions/1`, { content: { allowed_domains: ['ok.com'] } });
+    expect(wrongKind.statusCode).toBe(400);
+    expect(wrongKind.json().error.details[0].path).toBe('allowed_domains');
+    const edit = await api('PUT', `/api/policies/${p.id}/versions/1`, { content: { blocked_domains: ['example.com', '*.example.com', 'bücher.de'] } });
     expect(edit.statusCode).toBe(200);
-    expect(edit.json().content.allowed_domains).toEqual(['xn--bcher-kva.de']);
+    expect(edit.json().content.blocked_domains).toEqual(['example.com', '*.example.com', 'xn--bcher-kva.de']);
     expect(Object.keys(edit.json().content)).toHaveLength(9);
 
     const val = await api('POST', `/api/policies/${p.id}/versions/1/validate`);
@@ -57,13 +60,19 @@ describeDb('policy lifecycle, assignment and agent sync', () => {
     expect(rb.statusCode).toBe(200);
     expect(rb.json().active_version).toBe(1);
     expect((await api('POST', `/api/policies/${p.id}/rollback`, { version: 1 })).statusCode).toBe(409);
+
+    // Console "save": publishes a new version in one step; an identical save is a no-op.
+    const save = await api('PUT', `/api/policies/${p.id}/content`, { content: { blocked_domains: ['saved.example.com'] } });
+    expect(save.statusCode).toBe(200);
+    expect(save.json()).toMatchObject({ active_version: 3, unchanged: false });
+    expect((await api('PUT', `/api/policies/${p.id}/content`, { content: { blocked_domains: ['saved.example.com'] } })).json()).toMatchObject({ active_version: 3, unchanged: true });
+
     const actions = (await h.prisma.auditLog.findMany()).map((l) => l.action);
     expect(actions).toEqual(expect.arrayContaining(['POLICY_CREATED', 'POLICY_PUBLISHED', 'POLICY_ROLLED_BACK']));
   });
 
-  it('agent sync: version check, document, ETag/304, ack, status, rollback to a lower version', async () => {
-    const p = (await api('POST', '/api/policies', { name: 'P', content: { blocked_domains: ['example.com'] } })).json();
-    await api('POST', `/api/policies/${p.id}/versions/1/publish`);
+  it('agent sync of the merged policy: version check, document, ETag/304, ack, status, rollback', async () => {
+    const p = (await api('POST', '/api/policies', { name: 'P', content: { blocked_domains: ['example.com'] }, publish: true })).json();
     const dev = await enroll(h.app, 'INST-001', t);
     const agent = (method: 'GET' | 'POST', url: string, payload?: unknown, headers: Record<string, string> = {}) =>
       h.app.inject({ method, url, headers: { ...bearer(dev.token), ...headers }, ...(payload !== undefined ? { payload: payload as object } : {}) });
@@ -75,8 +84,8 @@ describeDb('policy lifecycle, assignment and agent sync', () => {
 
     await api('POST', `/api/policies/${p.id}/assignments`, { scope: 'ORGANIZATION' });
     const ver = (await agent('GET', '/api/agent/policy/version')).json();
-    expect(ver).toMatchObject({ policy_id: 'POL-001', version: 1 });
-    expect(ver.etag).toMatch(/^"POL-001:1:[0-9a-f]{8}"$/);
+    expect(ver).toMatchObject({ policy_id: 'EFFECTIVE', version: 1 });
+    expect(ver.etag).toMatch(/^"EFFECTIVE:1:[0-9a-f]{8}"$/);
 
     const hb = await agent('POST', '/api/agent/heartbeat', heartbeatPayload(dev));
     expect(hb.json().policy).toEqual(ver);
@@ -85,33 +94,38 @@ describeDb('policy lifecycle, assignment and agent sync', () => {
     expect(doc.statusCode).toBe(200);
     expect(doc.headers.etag).toBe(ver.etag);
     const body = doc.json();
-    expect(body).toMatchObject({ schema_version: 1, policy_id: 'POL-001', version: 1, organization_id: 'INST-001', device_uuid: dev.deviceUuid, assignment_scope: 'ORGANIZATION' });
+    expect(body).toMatchObject({ schema_version: 1, policy_id: 'EFFECTIVE', version: 1, organization_id: 'INST-001', device_uuid: dev.deviceUuid, assignment_scope: 'MERGED' });
+    expect(body.sources).toEqual([{ code: 'POL-001', kind: 'BLACKLIST', version: 1, via: ['ORGANIZATION'] }]);
     expect(canonicalSha256(body.content)).toBe(body.content_sha256);
-    expect(ver.etag).toBe(`"POL-001:1:${body.content_sha256.slice(0, 8)}"`);
+    expect(ver.etag).toBe(`"EFFECTIVE:1:${body.content_sha256.slice(0, 8)}"`);
 
     const cached = await agent('GET', '/api/agent/policy', undefined, { 'if-none-match': ver.etag });
     expect(cached.statusCode).toBe(304);
     expect(cached.body).toBe('');
-    expect((await agent('GET', '/api/agent/policy', undefined, { 'if-none-match': '"POL-001:0:00000000"' })).statusCode).toBe(200);
+    expect((await agent('GET', '/api/agent/policy', undefined, { 'if-none-match': '"EFFECTIVE:0:00000000"' })).statusCode).toBe(200);
 
-    expect((await agent('POST', '/api/agent/policy/status', { policy_id: 'POL-001', version: 1, status: 'APPLYING' })).statusCode).toBe(204);
-    expect((await agent('POST', '/api/agent/policy/ack', { policy_id: 'POL-001', version: 1, content_sha256: body.content_sha256 })).statusCode).toBe(204);
-    expect((await agent('POST', '/api/agent/policy/ack', { policy_id: 'POL-001', version: 2, content_sha256: body.content_sha256 })).statusCode).toBe(409);
+    expect((await agent('POST', '/api/agent/policy/status', { policy_id: 'EFFECTIVE', version: 1, status: 'APPLYING' })).statusCode).toBe(204);
+    expect((await agent('POST', '/api/agent/policy/ack', { policy_id: 'EFFECTIVE', version: 1, content_sha256: body.content_sha256 })).statusCode).toBe(204);
+    expect((await agent('POST', '/api/agent/policy/ack', { policy_id: 'EFFECTIVE', version: 2, content_sha256: body.content_sha256 })).statusCode).toBe(409);
     const view = (await api('GET', `/api/devices/${dev.deviceId}`)).json();
     expect(view.policy_status).toMatchObject({ status: 'APPLIED', version: 1 });
-    expect(view.current_policy).toMatchObject({ policy_id: 'POL-001', version: 1 });
+    expect(view.effective_policy).toMatchObject({ policy_id: 'EFFECTIVE', version: 1, content: { blocked_domains: ['example.com'] } });
 
-    const fail = await agent('POST', '/api/agent/policy/status', { policy_id: 'POL-001', version: 1, status: 'FAILED', error_code: 'policy_apply_failed', message: 'WFP filter add failed: 0x80320009', active_policy_id: 'POL-001', active_version: 0 });
+    const fail = await agent('POST', '/api/agent/policy/status', { policy_id: 'EFFECTIVE', version: 1, status: 'FAILED', error_code: 'policy_apply_failed', message: 'apply failed', active_policy_id: 'EFFECTIVE', active_version: 0 });
     expect(fail.statusCode).toBe(204);
     expect(await h.prisma.auditLog.count({ where: { action: 'POLICY_APPLICATION_FAILED' } })).toBe(1);
-    expect((await agent('POST', '/api/agent/policy/status', { policy_id: 'POL-001', version: 1, status: 'BROKEN' })).statusCode).toBe(400);
+    expect((await agent('POST', '/api/agent/policy/status', { policy_id: 'EFFECTIVE', version: 1, status: 'BROKEN' })).statusCode).toBe(400);
 
-    // v2 then rollback: agent is told the LOWER version again
+    // A new restriction version with identical rules does not bump the merged version.
     await api('POST', `/api/policies/${p.id}/versions`, {});
     await api('POST', `/api/policies/${p.id}/versions/2/publish`);
+    expect((await agent('GET', '/api/agent/policy/version')).json().version).toBe(1);
+    // Changed rules → version 2; rolling the restriction back → version 3 with v1's content (versions never repeat).
+    await api('PUT', `/api/policies/${p.id}/content`, { content: { blocked_domains: ['other.com'] } });
     expect((await agent('GET', '/api/agent/policy/version')).json().version).toBe(2);
     await api('POST', `/api/policies/${p.id}/rollback`, { version: 1 });
-    expect((await agent('GET', '/api/agent/policy/version')).json()).toEqual(ver);
+    const back = (await agent('GET', '/api/agent/policy')).json();
+    expect(back).toMatchObject({ version: 3, content_sha256: body.content_sha256 });
 
     // deactivate → nothing applies
     await api('POST', `/api/policies/${p.id}/deactivate`);
@@ -120,34 +134,41 @@ describeDb('policy lifecycle, assignment and agent sync', () => {
     expect((await agent('GET', '/api/agent/policy')).statusCode).toBe(200);
   });
 
-  it('assignment precedence: DEVICE > GROUP > ORGANIZATION, priority within scope', async () => {
-    const mk = async (code: string) => {
-      const p = (await api('POST', '/api/policies', { name: code, code })).json();
-      await api('POST', `/api/policies/${p.id}/versions/1/publish`);
-      return p.id as string;
-    };
-    const [orgPol, grpLow, grpHigh, devPol] = [await mk('ORG-POL'), await mk('GRP-LOW'), await mk('GRP-HIGH'), await mk('DEV-POL')];
+  it('every restriction reaching a computer is merged (organization + groups + device)', async () => {
+    const mk = async (code: string, kind: string, content: object) => (await api('POST', '/api/policies', { name: code, code, kind, content, publish: true })).json().id as string;
+    const orgPol = await mk('ORG-POL', 'BLACKLIST', { blocked_domains: ['org.com'] });
+    const grpPol = await mk('GRP-POL', 'BLACKLIST', { blocked_domains: ['grp.com'] });
+    const allow = await mk('ALLOW', 'ALLOW_ONLY', { allowed_domains: ['school.org', '*.school.org'] });
+    const redir = await mk('REDIR', 'REDIRECT', { redirect_rules: [{ from: 'games.com', to: 'learn.school.org' }] });
     const dev = await enroll(h.app, 'INST-001', t);
     const g1 = (await api('POST', '/api/device-groups', { name: 'g1' })).json().id;
-    const g2 = (await api('POST', '/api/device-groups', { name: 'g2' })).json().id;
     await api('POST', `/api/device-groups/${g1}/members`, { device_ids: [dev.deviceId] });
-    await api('POST', `/api/device-groups/${g2}/members`, { device_ids: [dev.deviceId] });
-    const current = async () => (await h.app.inject({ method: 'GET', url: '/api/agent/policy/version', headers: bearer(dev.token) })).json().policy_id;
+    const content = async () => (await h.app.inject({ method: 'GET', url: '/api/agent/policy', headers: bearer(dev.token) })).json().content;
 
-    await api('POST', `/api/policies/${orgPol}/assignments`, { scope: 'ORGANIZATION', priority: 999 });
-    expect(await current()).toBe('ORG-POL');
-    await api('POST', `/api/policies/${grpLow}/assignments`, { scope: 'GROUP', target_group_id: g1, priority: 1 });
-    expect(await current()).toBe('GRP-LOW');
-    await api('POST', `/api/policies/${grpHigh}/assignments`, { scope: 'GROUP', target_group_id: g2, priority: 5 });
-    expect(await current()).toBe('GRP-HIGH');
-    const da = (await api('POST', `/api/policies/${devPol}/assignments`, { scope: 'DEVICE', target_device_id: dev.deviceId, priority: -10 })).json();
-    expect(await current()).toBe('DEV-POL');
-    const doc = await h.app.inject({ method: 'GET', url: '/api/agent/policy', headers: bearer(dev.token) });
-    expect(doc.json().assignment_scope).toBe('DEVICE');
-    expect((await api('DELETE', `/api/policies/${devPol}/assignments/${da.id}`)).statusCode).toBe(204);
-    expect(await current()).toBe('GRP-HIGH');
-    await api('POST', `/api/policies/${grpHigh}/deactivate`);
-    expect(await current()).toBe('GRP-LOW');
+    await api('POST', `/api/policies/${orgPol}/assignments`, { scope: 'ORGANIZATION' });
+    await api('POST', `/api/policies/${grpPol}/assignments`, { scope: 'GROUP', target_group_id: g1 });
+    expect(await content()).toMatchObject({ default_action: 'allow', blocked_domains: ['grp.com', 'org.com'] });
+
+    const bulk = await api('POST', '/api/assignments/bulk', { policy_id: allow, device_ids: [dev.deviceId] });
+    expect(bulk.statusCode).toBe(201);
+    expect((await api('POST', '/api/assignments/bulk', { policy_id: allow, device_ids: [dev.deviceId] })).json().created).toEqual([]);
+    await api('POST', '/api/assignments/bulk', { policy_id: redir, group_ids: [g1] });
+    const merged = await content();
+    expect(merged).toMatchObject({
+      default_action: 'block',
+      allowed_domains: ['*.school.org', 'learn.school.org', 'school.org'],
+      blocked_domains: ['grp.com', 'org.com'],
+      redirect_rules: [{ from: 'games.com', to: 'learn.school.org' }],
+    });
+    const list = (await api('GET', '/api/assignments')).json().items;
+    expect(list).toHaveLength(4);
+    expect(list.find((a: { scope: string; policy: { code: string } }) => a.scope === 'GROUP' && a.policy.code === 'REDIR').target_name).toBe('g1');
+
+    const devAssign = list.find((a: { scope: string }) => a.scope === 'DEVICE');
+    expect((await api('DELETE', `/api/policies/${allow}/assignments/${devAssign.id}`)).statusCode).toBe(204);
+    expect((await content()).default_action).toBe('allow');
+    await api('POST', `/api/policies/${grpPol}/deactivate`);
+    expect((await content()).blocked_domains).toEqual(['org.com']);
   });
 
   it('ad-hoc validation returns errors, warnings and decisions', async () => {

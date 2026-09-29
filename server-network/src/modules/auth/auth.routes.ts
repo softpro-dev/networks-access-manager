@@ -4,7 +4,7 @@ import { adminAuth, getAdmin } from '../../middleware/adminAuth.js';
 import { makeLimiter } from '../../services/rateLimit.js';
 import { parse } from '../../utils/validation.js';
 import { notFound } from '../../utils/errors.js';
-import { login, logout } from './auth.service.js';
+import { login, loginWithLink, logout } from './auth.service.js';
 import { serializeUser } from '../users/users.service.js';
 
 const loginBody = z.object({
@@ -32,6 +32,13 @@ export async function authRoutes(app: FastifyInstance) {
     return login(ctx, body.email, body.password, { ip: req.ip, userAgent: req.headers['user-agent'] });
   });
 
+  const linkBody = z.object({ token: z.string().min(20).max(200) }).strict();
+  const perIpLink = makeLimiter(app, enabled, { name: 'login-link-ip', max: 10, windowMs: 60_000, key: (req) => req.ip });
+  app.post('/api/auth/login-link', { preHandler: perIpLink }, async (req) => {
+    const body = parse(linkBody, req.body);
+    return loginWithLink(ctx, body.token, { ip: req.ip, userAgent: req.headers['user-agent'] });
+  });
+
   const auth = adminAuth(ctx);
 
   app.post('/api/auth/logout', { preHandler: auth }, async (req, reply) => {
@@ -44,6 +51,6 @@ export async function authRoutes(app: FastifyInstance) {
     const a = getAdmin(req);
     const user = await ctx.prisma.user.findUnique({ where: { id: a.userId }, include: { organization: true } });
     if (!user) throw notFound();
-    return { user: serializeUser(user), session_id: a.sessionId };
+    return { user: serializeUser(user), session_id: a.sessionId, features: { organization_delete: ctx.config.allowOrganizationDelete } };
   });
 }

@@ -33,6 +33,7 @@ export function Badge({ tone = 'neutral', children, title }: { tone?: Tone; chil
 }
 
 const STATUS_TONES: Record<string, Tone> = {
+  PRE_REGISTERED: 'blue',
   PENDING: 'amber',
   APPROVED: 'green',
   REJECTED: 'gray',
@@ -53,6 +54,19 @@ const STATUS_TONES: Record<string, Tone> = {
 export function StatusBadge({ status }: { status: string | null | undefined }) {
   if (!status) return <span className="muted">—</span>;
   return <Badge tone={STATUS_TONES[status] ?? 'neutral'}>{status.replace(/_/g, ' ')}</Badge>;
+}
+
+/** Tab strip (buttons with aria-selected); the caller renders the active panel. */
+export function Tabs<K extends string>({ tabs, value, onChange, label }: { tabs: { key: K; label: ReactNode }[]; value: K; onChange: (k: K) => void; label: string }) {
+  return (
+    <div className="tabs" role="tablist" aria-label={label}>
+      {tabs.map((t) => (
+        <button key={t.key} type="button" role="tab" aria-selected={t.key === value} className={`tab ${t.key === value ? 'active' : ''}`} onClick={() => onChange(t.key)}>
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 export function Spinner({ label = 'Loading…' }: { label?: string }) {
@@ -197,6 +211,7 @@ export function ConfirmDialog({
   confirmLabel = 'Confirm',
   destructive,
   busy,
+  confirmDisabled,
   error,
   onConfirm,
   onClose,
@@ -207,6 +222,8 @@ export function ConfirmDialog({
   confirmLabel?: string;
   destructive?: boolean;
   busy?: boolean;
+  /** e.g. until a typed confirmation matches */
+  confirmDisabled?: boolean;
   error?: unknown;
   onConfirm: () => void;
   onClose: () => void;
@@ -221,7 +238,7 @@ export function ConfirmDialog({
           <Button onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button variant={destructive ? 'danger' : 'primary'} busy={busy} onClick={onConfirm} autoFocus>
+          <Button variant={destructive ? 'danger' : 'primary'} busy={busy} disabled={confirmDisabled} onClick={onConfirm} autoFocus={!confirmDisabled}>
             {confirmLabel}
           </Button>
         </>

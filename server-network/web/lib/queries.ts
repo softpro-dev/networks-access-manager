@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/
 import { get } from './api';
 import { useAuth } from './auth';
 import { useToast } from '@/components/toast';
-import type { List, Organization } from './types';
+import type { List, OrgAssignment, Organization, Policy } from './types';
 
 /** Organizations visible to the caller (org admins: only their own). */
 export function useOrganizations() {
@@ -42,5 +42,22 @@ export function useAction<TVars, TRes>(
     onError: (e) => {
       if (opts.toastErrors) toast(e instanceof Error ? e.message : 'Action failed', 'error');
     },
+  });
+}
+
+/** Restrictions (policies) of one organization ('' = all, super admin). */
+export function useRestrictions(orgId: string) {
+  return useQuery({
+    queryKey: ['policies', { org: orgId }],
+    queryFn: () => get<List<Policy>>('/policies', { organization_id: orgId || undefined }),
+  });
+}
+
+/** Every restriction assignment of one organization ('' = all, super admin). */
+export function useOrgAssignments(orgId: string, enabled = true) {
+  return useQuery({
+    queryKey: ['assignments', { org: orgId }],
+    queryFn: () => get<List<OrgAssignment>>('/assignments', { organization_id: orgId || undefined }),
+    enabled,
   });
 }

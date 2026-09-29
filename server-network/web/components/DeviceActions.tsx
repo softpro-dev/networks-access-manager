@@ -10,35 +10,37 @@ type Kind = 'approve' | 'reject' | 'revoke' | 're-enroll';
 
 const COPY: Record<Kind, { title: string; label: string; body: (n: string) => string; destructive?: boolean; done: string }> = {
   approve: {
-    title: 'Approve device',
+    title: 'Approve computer',
     label: 'Approve',
-    body: (n) => `Approve "${n}"? The agent will claim its device credential on its next registration-status poll and start receiving policies.`,
-    done: 'Device approved',
+    body: (n) => `Approve "${n}"? The agent will claim its device credential on its next registration-status poll and start receiving its restrictions.`,
+    done: 'Computer approved',
   },
   reject: {
-    title: 'Reject device',
+    title: 'Reject computer',
     label: 'Reject',
     body: (n) => `Reject the enrollment request from "${n}"? The agent will not receive a credential.`,
     destructive: true,
-    done: 'Device rejected',
+    done: 'Computer rejected',
   },
   revoke: {
-    title: 'Revoke device',
+    title: 'Revoke computer',
     label: 'Revoke',
-    body: (n) => `Revoke "${n}"? All of its credentials stop working immediately and it will no longer receive policies. This cannot be undone except by re-enrolling.`,
+    body: (n) => `Revoke "${n}"? All of its credentials stop working immediately and it will no longer receive restrictions. This cannot be undone except by re-enrolling.`,
     destructive: true,
-    done: 'Device revoked',
+    done: 'Computer revoked',
   },
   're-enroll': {
-    title: 'Re-enroll device',
+    title: 'Re-enroll computer',
     label: 'Re-enroll',
     body: (n) => `Reset "${n}" to PENDING? Its credentials are revoked and the agent must register again with a new enrollment secret, then be approved again.`,
     destructive: true,
-    done: 'Device reset to PENDING',
+    done: 'Computer reset to PENDING',
   },
 };
 
 export function availableActions(d: Pick<Device, 'status'>): Kind[] {
+  // A pre-added computer has no agent yet: nothing to approve, revoke or reset until it registers.
+  if (d.status === 'PRE_REGISTERED') return [];
   const a: Kind[] = [];
   if (d.status === 'PENDING') a.push('approve', 'reject');
   if (d.status !== 'REVOKED') a.push('revoke');
@@ -50,11 +52,12 @@ export function DeviceActions({ device, only, size }: { device: Device | DeviceD
   const [pending, setPending] = useState<Kind | null>(null);
   const action = useAction((k: Kind) => post<DeviceDetail>(`/devices/${device.id}/${k}`), {
     success: (_r, k) => COPY[k].done,
-    invalidate: [['devices'], ['device', device.id], ['dashboard'], ['audit']],
+    invalidate: [['devices'], ['device', device.id], ['analytics'], ['audit']],
     onSuccess: () => setPending(null),
   });
   const kinds = availableActions(device).filter((k) => !only || only.includes(k));
   const c = pending ? COPY[pending] : null;
+  if (!kinds.length) return null;
   return (
     <>
       <div className="btn-row">

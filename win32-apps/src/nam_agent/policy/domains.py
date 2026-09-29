@@ -142,9 +142,14 @@ def is_management_host(name: str, management_hosts: Iterable[str]) -> bool:
 
 @dataclass(frozen=True)
 class Decision:
-    action: Literal["allow", "block"]
+    action: Literal["allow", "block", "redirect"]
     reason: Literal["management", "rule", "tie", "default", "disabled", "invalid_name"]
     pattern: str | None = None
+    target: str | None = None
+
+
+# On equal specificity: block beats redirect beats allow (contract §5).
+_TIE_RANK = {"blocked": 3, "redirect": 2, "allowed": 1}
 
 
 def decide(
@@ -153,9 +158,12 @@ def decide(
     default_action: Literal["allow", "block"],
     allowed_domains: Sequence[str],
     blocked_domains: Sequence[str],
+    redirect_rules: Sequence[tuple[str, str]] = (),
     enabled: bool = True,
     management_hosts: Iterable[str] = (),
 ) -> Decision:
+    """Most specific matching rule wins; ties resolve block > redirect > allow.
+    Redirect targets are always allowed. `redirect_rules` are (from_pattern, to_host) pairs."""
     name = normalize_query_name(name_input)
     if name is None:
         return Decision(default_action, "invalid_name")
@@ -163,25 +171,36 @@ def decide(
         return Decision("allow", "management")
     if not enabled:
         return Decision("allow", "disabled")
+    if any(to == name for _, to in redirect_rules):
+        return Decision("allow", "rule", name)
 
-    def best(patterns: Sequence[str]) -> tuple[str, tuple[int, int]] | None:
-        top = None
-        for p in patterns:
-            if pattern_matches(p, name):
-                s = specificity(p)
-                if top is None or s > top[1]:
-                    top = (p, s)
-        return top
+    best: tuple[str, tuple[int, int], str, str | None] | None = None
+    tied = False
 
-    a, b = best(allowed_domains), best(blocked_domains)
-    if a is None and b is None:
+    def consider(pattern: str, lst: str, target: str | None = None) -> None:
+        nonlocal best, tied
+        if not pattern_matches(pattern, name):
+            return
+        s = specificity(pattern)
+        if best is None or s > best[1]:
+            best, tied = (pattern, s, lst, target), False
+        elif s == best[1] and lst != best[2]:
+            tied = True
+            if _TIE_RANK[lst] > _TIE_RANK[best[2]]:
+                best = (pattern, s, lst, target)
+
+    for p in allowed_domains:
+        consider(p, "allowed")
+    for p in blocked_domains:
+        consider(p, "blocked")
+    for frm, to in redirect_rules:
+        consider(frm, "redirect", to)
+
+    if best is None:
         return Decision(default_action, "default")
-    if b is None:
-        return Decision("allow", "rule", a[0])  # type: ignore[index]
-    if a is None:
-        return Decision("block", "rule", b[0])
-    if a[1] > b[1]:
-        return Decision("allow", "rule", a[0])
-    if a[1] < b[1]:
-        return Decision("block", "rule", b[0])
-    return Decision("block", "tie", b[0])
+    reason = "tie" if tied else "rule"
+    if best[2] == "allowed":
+        return Decision("allow", reason, best[0])
+    if best[2] == "blocked":
+        return Decision("block", reason, best[0])
+    return Decision("redirect", reason, best[0], best[3])

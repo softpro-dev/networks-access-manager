@@ -28,3 +28,8 @@ npm run admin:reset-password -- <email>
 
 The password comes from `RESET_PASSWORD`, else `SEED_SUPER_ADMIN_PASSWORD` (when `<email>` is the
 seed super admin), else a hidden prompt. It also clears lockout and revokes the user's sessions.
+
+In development (`NODE_ENV=development`) this is automatic for the seed super admin: `npm run dev`
+first runs `scripts/dev-sync-admin.ts` (npm `predev` hook), which updates the stored password when it
+differs from `SEED_SUPER_ADMIN_PASSWORD`. Restart `npm run dev` after editing `.env`. It never runs
+for `npm start`.

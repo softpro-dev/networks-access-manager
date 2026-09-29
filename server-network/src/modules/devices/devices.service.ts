@@ -4,16 +4,20 @@ import type { AppContext } from '../../types.js';
 import type { AdminPrincipal } from '../../domain/rbac.js';
 import { assertOrgAccess, listScope } from '../../domain/rbac.js';
 import { AuditAction, writeAudit } from '../../services/audit.js';
-import { resolveEffectivePolicy } from '../../services/policyResolution.js';
-import { conflict } from '../../utils/errors.js';
+import { EFFECTIVE_POLICY_ID, resolveEffectivePolicy } from '../../services/policyResolution.js';
+import { badRequest, conflict } from '../../utils/errors.js';
 import { iso, pageArgs, pageBody } from '../../utils/http.js';
 import { makePolicyEtag } from '../../domain/etag.js';
+import { createScope } from '../../domain/rbac.js';
+import { normalizeMac } from '../../domain/mac.js';
 
 const deviceInclude = {
   organization: true,
   approvedBy: { select: { id: true, email: true } },
   currentPolicy: { select: { id: true, code: true, name: true } },
   policyStatus: true,
+  memberships: { include: { group: { select: { id: true, name: true } } } },
+  effectivePolicy: { select: { version: true, contentSha256: true } },
 } satisfies Prisma.DeviceInclude;
 
 type DeviceRow = Prisma.DeviceGetPayload<{ include: typeof deviceInclude }>;
@@ -23,6 +27,10 @@ export function serializeDevice(d: DeviceRow, heartbeatIntervalSeconds: number) 
   return {
     id: d.id,
     display_name: d.displayName,
+    title: d.displayName,
+    serial_number: d.serialNumber,
+    mac_address: d.macAddress,
+    groups: d.memberships.map((m) => ({ id: m.group.id, name: m.group.name })),
     organization: { id: d.organization.id, code: d.organization.code, name: d.organization.name },
     hostname: d.hostname,
     device_uuid: d.deviceUuid,
@@ -52,6 +60,7 @@ export function serializeDevice(d: DeviceRow, heartbeatIntervalSeconds: number) 
           updated_at: iso(d.policyStatus.updatedAt),
         }
       : null,
+    effective_policy_version: d.effectivePolicy?.version ?? null,
     created_at: iso(d.createdAt),
     updated_at: iso(d.updatedAt),
   };
@@ -59,14 +68,42 @@ export function serializeDevice(d: DeviceRow, heartbeatIntervalSeconds: number) 
 
 export const listDevicesQuery = z.object({
   organization_id: z.string().max(64).optional(),
-  status: z.enum(['PENDING', 'APPROVED', 'REJECTED', 'REVOKED']).optional(),
+  status: z.enum(['PRE_REGISTERED', 'PENDING', 'APPROVED', 'REJECTED', 'REVOKED']).optional(),
   group_id: z.string().max(64).optional(),
   q: z.string().trim().max(200).optional(),
   page: z.coerce.number().int().min(1).default(1),
   page_size: z.coerce.number().int().min(1).max(200).default(50),
 });
 
-export const updateDeviceBody = z.object({ display_name: z.string().trim().min(1).max(200).nullable() }).strict();
+const macField = z.string().transform((v, c) => {
+  const m = normalizeMac(v);
+  if (!m) {
+    c.addIssue({ code: 'custom', message: 'Must be a MAC address like AA:BB:CC:DD:EE:FF' });
+    return z.NEVER;
+  }
+  return m;
+});
+const groupIdsField = z.array(z.string().min(1).max(64)).max(100);
+
+export const createDeviceBody = z
+  .object({
+    organization_id: z.string().max(64).optional(),
+    mac_address: macField,
+    title: z.string().trim().min(1).max(200),
+    serial_number: z.string().trim().max(100).nullish(),
+    group_ids: groupIdsField.default([]),
+  })
+  .strict();
+
+export const updateDeviceBody = z
+  .object({
+    display_name: z.string().trim().min(1).max(200).nullable().optional(),
+    title: z.string().trim().min(1).max(200).optional(),
+    serial_number: z.string().trim().max(100).nullable().optional(),
+    mac_address: macField.nullable().optional(),
+    group_ids: groupIdsField.optional(),
+  })
+  .strict();
 
 export async function listDevices(ctx: AppContext, p: AdminPrincipal, q: z.infer<typeof listDevicesQuery>) {
   const orgId = listScope(p, q.organization_id);
@@ -75,7 +112,16 @@ export async function listDevices(ctx: AppContext, p: AdminPrincipal, q: z.infer
     ...(q.status ? { status: q.status } : {}),
     ...(q.group_id ? { memberships: { some: { groupId: q.group_id } } } : {}),
     ...(q.q
-      ? { OR: [{ hostname: { contains: q.q } }, { displayName: { contains: q.q } }, { deviceUuid: { contains: q.q.toLowerCase() } }, { lastIp: { contains: q.q } }] }
+      ? {
+          OR: [
+            { hostname: { contains: q.q } },
+            { displayName: { contains: q.q } },
+            { serialNumber: { contains: q.q } },
+            { macAddress: { contains: q.q.toUpperCase() } },
+            { deviceUuid: { contains: q.q.toLowerCase() } },
+            { lastIp: { contains: q.q } },
+          ],
+        }
       : {}),
   };
   const [items, total] = await Promise.all([
@@ -92,15 +138,13 @@ async function loadDevice(ctx: AppContext, p: AdminPrincipal, id: string) {
 
 export async function getDevice(ctx: AppContext, p: AdminPrincipal, id: string) {
   const d = await loadDevice(ctx, p, id);
-  const [credentials, groups, effective] = await Promise.all([
+  const [credentials, effective] = await Promise.all([
     ctx.prisma.deviceCredential.findMany({ where: { deviceId: d.id }, orderBy: { createdAt: 'desc' } }),
-    ctx.prisma.deviceGroupMember.findMany({ where: { deviceId: d.id }, include: { group: true } }),
     resolveEffectivePolicy(ctx.prisma, d),
   ]);
   return {
     ...serializeDevice(d, ctx.config.heartbeatIntervalSeconds),
     interfaces: d.interfaces,
-    groups: groups.map((g) => ({ id: g.group.id, name: g.group.name })),
     credentials: credentials.map((c) => ({
       credential_id: c.id,
       created_at: iso(c.createdAt),
@@ -112,25 +156,89 @@ export async function getDevice(ctx: AppContext, p: AdminPrincipal, id: string) 
     })),
     effective_policy: effective
       ? {
-          id: effective.policy.id,
-          policy_id: effective.policy.code,
-          version: effective.version.version,
-          assignment_scope: effective.assignment.scope,
-          assignment_id: effective.assignment.id,
-          etag: makePolicyEtag(effective.policy.code, effective.version.version, effective.version.contentSha256!),
+          policy_id: EFFECTIVE_POLICY_ID,
+          version: effective.version,
+          content_sha256: effective.contentSha256,
+          etag: makePolicyEtag(EFFECTIVE_POLICY_ID, effective.version, effective.contentSha256),
+          updated_at: iso(effective.updatedAt),
+          sources: effective.sources,
+          content: effective.content,
         }
       : null,
   };
 }
 
+/** Groups must belong to the device's organization (cross-org ids are rejected). */
+async function checkGroups(ctx: AppContext, organizationId: string, groupIds: string[]) {
+  const unique = [...new Set(groupIds)];
+  if (!unique.length) return unique;
+  const found = await ctx.prisma.deviceGroup.count({ where: { id: { in: unique }, organizationId } });
+  if (found !== unique.length) throw badRequest('Unknown group', [{ path: 'group_ids', message: 'One or more groups do not exist in this organization' }]);
+  return unique;
+}
+
+async function macInUse(ctx: AppContext, organizationId: string, mac: string, exceptId?: string) {
+  const other = await ctx.prisma.device.findFirst({ where: { organizationId, macAddress: mac, ...(exceptId ? { id: { not: exceptId } } : {}) } });
+  if (other) throw conflict('MAC_IN_USE', 'Another computer in this organization already has this MAC address');
+}
+
+/** Pre-add a computer by MAC. It stays PRE_REGISTERED until the agent on that machine registers. */
+export async function createDevice(ctx: AppContext, p: AdminPrincipal, body: z.infer<typeof createDeviceBody>, ip: string) {
+  const orgId = createScope(p, body.organization_id);
+  if (!(await ctx.prisma.organization.findUnique({ where: { id: orgId } }))) throw badRequest('Unknown organization');
+  await macInUse(ctx, orgId, body.mac_address);
+  const groupIds = await checkGroups(ctx, orgId, body.group_ids);
+  const d = await ctx.prisma.device.create({
+    data: {
+      organizationId: orgId,
+      status: 'PRE_REGISTERED',
+      macAddress: body.mac_address,
+      displayName: body.title,
+      serialNumber: body.serial_number ?? null,
+      memberships: { create: groupIds.map((groupId) => ({ groupId })) },
+    },
+  });
+  await audit(ctx, p, d, AuditAction.DEVICE_CREATED, ip, { mac_address: d.macAddress, title: d.displayName, group_ids: groupIds });
+  return getDevice(ctx, p, d.id);
+}
+
 export async function updateDevice(ctx: AppContext, p: AdminPrincipal, id: string, body: z.infer<typeof updateDeviceBody>, ip: string) {
   const d = await loadDevice(ctx, p, id);
-  await ctx.prisma.device.update({ where: { id: d.id }, data: { displayName: body.display_name } });
-  await audit(ctx, p, d, AuditAction.DEVICE_UPDATED, ip, { display_name: body.display_name });
+  const title = body.title ?? body.display_name;
+  if (body.mac_address !== undefined && body.mac_address !== d.macAddress) {
+    if (d.status === 'PRE_REGISTERED' && body.mac_address === null) throw badRequest('A pre-registered computer needs a MAC address');
+    if (body.mac_address) await macInUse(ctx, d.organizationId, body.mac_address, d.id);
+  }
+  const groupIds = body.group_ids ? await checkGroups(ctx, d.organizationId, body.group_ids) : undefined;
+  await ctx.prisma.$transaction(async (tx) => {
+    await tx.device.update({
+      where: { id: d.id },
+      data: {
+        ...(title !== undefined ? { displayName: title } : {}),
+        ...(body.serial_number !== undefined ? { serialNumber: body.serial_number } : {}),
+        ...(body.mac_address !== undefined ? { macAddress: body.mac_address } : {}),
+      },
+    });
+    if (groupIds) {
+      await tx.deviceGroupMember.deleteMany({ where: { deviceId: d.id, groupId: { notIn: groupIds } } });
+      await tx.deviceGroupMember.createMany({ data: groupIds.map((groupId) => ({ groupId, deviceId: d.id })), skipDuplicates: true });
+    }
+  });
+  await audit(ctx, p, d, AuditAction.DEVICE_UPDATED, ip, { changed: Object.keys(body) });
   return getDevice(ctx, p, id);
 }
 
-async function audit(ctx: AppContext, p: AdminPrincipal, d: { id: string; organizationId: string; deviceUuid: string; hostname: string }, action: Parameters<typeof writeAudit>[1]['action'], ip: string, extra: Record<string, unknown> = {}) {
+/** Delete a computer: credentials are revoked first (in the same transaction), then the row is removed. */
+export async function deleteDevice(ctx: AppContext, p: AdminPrincipal, id: string, ip: string) {
+  const d = await loadDevice(ctx, p, id);
+  await ctx.prisma.$transaction(async (tx) => {
+    await tx.deviceCredential.updateMany({ where: { deviceId: d.id, revokedAt: null }, data: { revokedAt: new Date() } });
+    await tx.device.delete({ where: { id: d.id } });
+  });
+  await audit(ctx, p, d, AuditAction.DEVICE_DELETED, ip, { title: d.displayName, mac_address: d.macAddress, previous_status: d.status });
+}
+
+async function audit(ctx: AppContext, p: AdminPrincipal, d: { id: string; organizationId: string; deviceUuid: string | null; hostname: string | null }, action: Parameters<typeof writeAudit>[1]['action'], ip: string, extra: Record<string, unknown> = {}) {
   await writeAudit(ctx.prisma, {
     organizationId: d.organizationId,
     actorType: 'USER',

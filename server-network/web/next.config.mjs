@@ -41,6 +41,17 @@ const nextConfig = {
   async rewrites() {
     return [{ source: '/api/:path*', destination: `${apiUrl}/api/:path*` }];
   },
+  async redirects() {
+    // Old console URLs (Devices / Device groups / Policies) → Computers / Restrictions. Query strings are kept.
+    return [
+      { source: '/devices', destination: '/computers', permanent: false },
+      { source: '/devices/:id', destination: '/computers/:id', permanent: false },
+      { source: '/groups', destination: '/computers?tab=groups', permanent: false },
+      { source: '/groups/:id', destination: '/computers/groups/:id', permanent: false },
+      { source: '/policies', destination: '/restrictions', permanent: false },
+      { source: '/policies/:id', destination: '/restrictions/:id', permanent: false },
+    ];
+  },
   async headers() {
     // /api/* responses are the Fastify API's own (strict CSP etc.) and are passed through untouched.
     return [{ source: '/((?!api/).*)', headers: securityHeaders }];

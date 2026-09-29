@@ -73,7 +73,9 @@ describeDb('organization isolation', () => {
 
     const doc = await h.app.inject({ method: 'GET', url: '/api/agent/policy?organization_id=' + orgB, headers: bearer(devA.token) });
     expect(doc.statusCode).toBe(200);
-    expect(doc.json()).toMatchObject({ policy_id: polA.code, organization_id: 'INST-001', device_uuid: devA.deviceUuid });
+    expect(doc.json()).toMatchObject({ policy_id: 'EFFECTIVE', organization_id: 'INST-001', device_uuid: devA.deviceUuid });
+    expect(doc.json().content.blocked_domains).toEqual(['a-only.com']);
+    expect(doc.json().sources).toEqual([expect.objectContaining({ code: polA.code })]);
     expect(doc.body).not.toContain('b-only.com');
 
     // Heartbeat claiming to be org B's device → DEVICE_MISMATCH

@@ -1,8 +1,11 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { del, patch, post } from '@/lib/api';
+import { useQueryClient } from '@tanstack/react-query';
+import { api, del, patch, post } from '@/lib/api';
 import { useAction } from '@/lib/queries';
-import type { Organization } from '@/lib/types';
+import { absTime } from '@/lib/format';
+import type { LoginLink, Organization } from '@/lib/types';
+import { useToast } from './toast';
 import { Alert, Button, ConfirmDialog, CopyButton, ErrorBox, Field, Modal, Mono } from './ui';
 
 export function OrgFormDialog({ open, org, onClose }: { open: boolean; org?: Organization | null; onClose: () => void }) {
@@ -171,5 +174,103 @@ export function RegistrationTokenControls({ org }: { org: Organization }) {
         </div>
       </Modal>
     </>
+  );
+}
+
+/** Super admin: issue a one-time sign-in link for the organization's (oldest active) admin and copy it. */
+export function LoginLinkButton({ org }: { org: Organization }) {
+  const [link, setLink] = useState<LoginLink | null>(null);
+  const [copied, setCopied] = useState(false);
+  const toast = useToast();
+  const m = useAction(() => post<LoginLink>(`/organizations/${org.id}/login-link`, {}), {
+    invalidate: [['audit']],
+    toastErrors: true,
+    onSuccess: async (r) => {
+      setLink(r);
+      try {
+        await navigator.clipboard.writeText(r.url);
+        setCopied(true);
+        toast(`Sign-in link for ${r.user.email} copied`, 'success');
+      } catch {
+        setCopied(false);
+      }
+    },
+  });
+  const minutes = link ? Math.max(1, Math.round((new Date(link.expires_at).getTime() - Date.now()) / 60_000)) : 0;
+  return (
+    <>
+      <Button size="sm" busy={m.isPending} disabled={org.status !== 'ACTIVE'} title={org.status !== 'ACTIVE' ? 'Organization is disabled' : `Sign in as an administrator of ${org.code}`} onClick={() => m.mutate(undefined)}>
+        Copy login link
+      </Button>
+      <Modal open={!!link} onClose={() => setLink(null)} title={`Login link · ${org.code}`} footer={<Button variant="primary" onClick={() => setLink(null)}>Done</Button>}>
+        {link && (
+          <div className="stack">
+            <p>
+              Signs in as <strong>{link.user.email}</strong> (organization administrator of {org.name}).
+            </p>
+            <Alert tone="warn" title={`Valid ${minutes} min, single use`}>
+              Expires {absTime(link.expires_at)}. Anyone who opens it first is signed in as this administrator — share it only over a trusted channel. Open it in a private window to keep your own session.
+            </Alert>
+            <div className="secret-box">
+              <code className="mono secret">{link.url}</code>
+              <CopyButton value={link.url} label={copied ? 'Copy again' : 'Copy'} />
+            </div>
+            {!copied && <p className="muted small">The browser blocked clipboard access; copy the link above.</p>}
+          </div>
+        )}
+      </Modal>
+    </>
+  );
+}
+
+/** Development tool: permanently delete an organization; the admin must type its code. */
+export function DeleteOrgDialog({ org, onClose }: { org: Organization | null; onClose: () => void }) {
+  const [typed, setTyped] = useState('');
+  const qc = useQueryClient();
+  useEffect(() => {
+    if (org) setTyped('');
+  }, [org]);
+  const m = useAction(() => api<{ devices: number; policies: number; users: number }>(`/organizations/${org!.id}`, { method: 'DELETE', query: { confirm: typed.trim() } }), {
+    success: (r) => `Deleted ${org?.code}: ${r.devices} computers, ${r.policies} restrictions, ${r.users} administrators`,
+    onSuccess: () => {
+      onClose();
+      // Everything may have referenced it.
+      void qc.invalidateQueries();
+    },
+  });
+  useEffect(() => {
+    if (org) m.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [org]);
+  const matches = !!org && typed.trim() === org.code;
+  return (
+    <ConfirmDialog
+      open={!!org}
+      title={`Delete ${org?.code ?? ''} permanently`}
+      confirmLabel="Delete organization"
+      destructive
+      busy={m.isPending}
+      confirmDisabled={!matches}
+      error={m.error}
+      onClose={onClose}
+      onConfirm={() => matches && m.mutate(undefined)}
+    >
+      <Alert tone="error" title="This cannot be undone">
+        Deletes <strong>{org?.name}</strong> with all its computers, credentials, groups, restrictions (with every version), assignments and administrators. Audit history is kept.
+      </Alert>
+      <Field label={`Type ${org?.code ?? ''} to confirm`} error={typed && !matches ? 'Does not match the organization code' : null}>
+        <input
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && matches) m.mutate(undefined);
+          }}
+          autoComplete="off"
+          spellCheck={false}
+          className="mono"
+          autoFocus
+        />
+      </Field>
+    </ConfirmDialog>
   );
 }

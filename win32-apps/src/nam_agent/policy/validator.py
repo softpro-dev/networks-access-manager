@@ -44,6 +44,8 @@ class EffectiveContent:
     block_dot: bool
     block_doh: bool
     enforce_browser_policies: bool
+    #: (from_pattern, to_host) pairs, in delivered order
+    redirect_rules: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -156,15 +158,34 @@ def validate_policy(
         except ValueError as e:
             raise PolicyValidationError(6, f"content.blocked_ips[{i}]: {e}") from None
 
+    redirects: list[tuple[str, str]] = []
+    for i, r in enumerate(content.redirect_rules):
+        try:
+            frm = validate_domain_pattern(r.from_)
+            to = validate_domain_pattern(r.to)
+        except DomainPatternError as e:
+            raise PolicyValidationError(6, f"content.redirect_rules[{i}]: {e}") from None
+        if to.startswith("*."):
+            raise PolicyValidationError(6, f"content.redirect_rules[{i}].to: redirect target must be an exact hostname")
+        if frm == to:
+            raise PolicyValidationError(6, f"content.redirect_rules[{i}]: a name cannot redirect to itself")
+        redirects.append((frm, to))
+
     # 7. management-server exception
     hosts = [h for h in management_hosts if h]
     if not hosts:
         raise PolicyValidationError(7, "management server host is unknown; refusing to apply without an exception")
     warnings: list[str] = []
     for host in hosts:
-        common = dict(default_action=content.default_action, allowed_domains=allowed, blocked_domains=blocked, enabled=content.enabled)
-        if decide(host, **common).action == "block":
-            warnings.append(f"policy would block the management host {host}; the management exception overrides it")
+        common = dict(
+            default_action=content.default_action,
+            allowed_domains=allowed,
+            blocked_domains=blocked,
+            redirect_rules=tuple(redirects),
+            enabled=content.enabled,
+        )
+        if decide(host, **common).action != "allow":
+            warnings.append(f"policy would block or redirect the management host {host}; the management exception overrides it")
         if decide(host, **common, management_hosts=hosts).action != "allow":  # pragma: no cover - invariant
             raise PolicyValidationError(7, "management exception does not cover the management host")
 
@@ -191,6 +212,7 @@ def validate_policy(
             block_dot=content.block_dot,
             block_doh=content.block_doh,
             enforce_browser_policies=content.enforce_browser_policies,
+            redirect_rules=tuple(redirects),
         ),
         warnings=tuple(warnings),
     )

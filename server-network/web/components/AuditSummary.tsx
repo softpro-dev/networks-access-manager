@@ -3,9 +3,9 @@ import Link from 'next/link';
 import type { AuditEntry } from '@/lib/types';
 
 const TARGET_LINKS: Record<string, string> = {
-  Device: '/devices/',
-  Policy: '/policies/',
-  DeviceGroup: '/groups/',
+  Device: '/computers/',
+  Policy: '/restrictions/',
+  DeviceGroup: '/computers/groups/',
   Organization: '/organizations/',
 };
 
@@ -14,6 +14,7 @@ export function AuditSummary({ entry: e }: { entry: AuditEntry }) {
   const m = e.metadata ?? {};
   const label =
     (m.hostname as string | undefined) ??
+    (m.title as string | undefined) ??
     (m.email as string | undefined) ??
     (m.policy_code as string | undefined) ??
     (m.name as string | undefined) ??
@@ -27,7 +28,7 @@ export function AuditSummary({ entry: e }: { entry: AuditEntry }) {
         <>
           {' → '}
           {e.target_type}{' '}
-          {base && e.target_id && e.action !== 'GROUP_DELETED' ? <Link href={`${base}${e.target_id}`}>{label}</Link> : label}
+          {base && e.target_id && !['GROUP_DELETED', 'DEVICE_DELETED', 'ORGANIZATION_DELETED'].includes(e.action) ? <Link href={`${base}${e.target_id}`}>{label}</Link> : label}
         </>
       )}
       {typeof m.version === 'number' && <> v{m.version}</>}
