@@ -360,17 +360,18 @@ The management server (`ADMIN_SERVER`) is always allowed by the enforcement exce
 
 **Decision for a queried name:**
 
-1. If the name is the management server host (or a subdomain of it) → **ALLOW** (always; cannot be overridden).
-2. If the name is exactly a redirect target (`to`) → **ALLOW**.
-3. Collect every matching allowed, blocked and redirect (`from`) pattern.
-4. The **most specific** match wins. Specificity key = `(label_count, is_exact)`
+1. If the name is a **loopback** address — `localhost` (or any `*.localhost`), an IPv4 `127.0.0.0/8` literal, or IPv6 `::1` → **ALLOW** (always; cannot be overridden).
+2. If the name is the management server host (or a subdomain of it) → **ALLOW** (always; cannot be overridden).
+3. If the name is exactly a redirect target (`to`) → **ALLOW**.
+4. Collect every matching allowed, blocked and redirect (`from`) pattern.
+5. The **most specific** match wins. Specificity key = `(label_count, is_exact)`
    compared descending, where `label_count` counts the `*` as a label
    (`*.example.com` = 3, `a.example.com` = 3, `example.com` = 2) and
    `is_exact` is 1 for non-wildcard patterns. Examples for name `a.example.com`:
    exact `a.example.com` (3,1) beats `*.example.com` (3,0). For name
    `x.b.example.com`: `*.b.example.com` (4,0) beats `*.example.com` (3,0).
-5. Tie between rules of equal specificity: **BLOCK > REDIRECT > ALLOW**.
-6. No match → `default_action`.
+6. Tie between rules of equal specificity: **BLOCK > REDIRECT > ALLOW**.
+7. No match → `default_action`.
 
 A policy that would block the management host is still valid, but the
 management exception overrides it; the server's validator emits a warning.

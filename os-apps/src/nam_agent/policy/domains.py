@@ -132,6 +132,23 @@ def specificity(pattern: str) -> tuple[int, int]:
     return (len(pattern.split(".")), 0 if pattern.startswith("*.") else 1)
 
 
+# Loopback is always allowed (never blocked), independent of policy or management config.
+LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1")
+
+
+def is_loopback(name_input: str) -> bool:
+    """True for `localhost` (and its subdomains) and any IPv4/IPv6 loopback literal."""
+    v = name_input.strip().strip(".").lower()
+    if not v:
+        return False
+    if v == "localhost" or v.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(v).is_loopback
+    except ValueError:
+        return False
+
+
 def is_management_host(name: str, management_hosts: Iterable[str]) -> bool:
     for h in management_hosts:
         host = normalize_domain(h)
@@ -164,6 +181,8 @@ def decide(
 ) -> Decision:
     """Most specific matching rule wins; ties resolve block > redirect > allow.
     Redirect targets are always allowed. `redirect_rules` are (from_pattern, to_host) pairs."""
+    if is_loopback(name_input):
+        return Decision("allow", "management")
     name = normalize_query_name(name_input)
     if name is None:
         return Decision(default_action, "invalid_name")

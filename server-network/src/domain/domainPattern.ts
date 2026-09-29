@@ -102,6 +102,21 @@ function compareSpec(a: [number, number], b: [number, number]): number {
   return a[0] !== b[0] ? a[0] - b[0] : a[1] - b[1];
 }
 
+// Loopback is always allowed (never blocked), independent of policy or management config.
+export const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '::1'] as const;
+
+export function isLoopback(nameInput: string): boolean {
+  const v = nameInput.trim().replace(/\.+$/, '').toLowerCase();
+  if (!v) return false;
+  if (v === 'localhost' || v.endsWith('.localhost')) return true;
+  // IPv4 loopback 127.0.0.0/8
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(v);
+  if (m && m.slice(1).every((n) => Number(n) <= 255) && Number(m[1]) === 127) return true;
+  // IPv6 loopback ::1 (allow zone id / brackets stripped)
+  const v6 = v.replace(/^\[|\]$/g, '').replace(/%.*$/, '');
+  return v6 === '::1' || v6 === '0:0:0:0:0:0:0:1';
+}
+
 export function isManagementHost(name: string, managementHosts: readonly string[]): boolean {
   for (const h of managementHosts) {
     const host = normalizeDomain(h);
@@ -145,6 +160,7 @@ const TIE_RANK = { blocked: 3, redirect: 2, allowed: 1 } as const;
  * validator and the preview endpoint.
  */
 export function decide(nameInput: string, content: DecisionContent, managementHosts: readonly string[] = []): Decision {
+  if (isLoopback(nameInput)) return { action: 'allow', reason: 'management' };
   const name = normalizeQueryName(nameInput);
   if (name === null) return { action: content.default_action, reason: 'invalid_name' };
   if (isManagementHost(name, managementHosts)) return { action: 'allow', reason: 'management' };

@@ -97,3 +97,16 @@ def test_device_uuid_still_checked_for_merged():
     with pytest.raises(PolicyValidationError) as ei:
         v(merged(device_uuid=DEV.replace("3f", "4f", 1)))
     assert ei.value.step == 4
+
+
+def test_loopback_always_allowed_even_under_block_all():
+    from nam_agent.policy.domains import decide, is_loopback
+
+    kw = dict(default_action="block", allowed_domains=(), blocked_domains=())
+    for host in ["localhost", "app.localhost", "LOCALHOST.", "127.0.0.1", "127.5.9.1", "::1"]:
+        assert is_loopback(host)
+        assert decide(host, **kw).action == "allow"
+    # a normal name is still blocked under block-all
+    assert decide("example.com", **kw).action == "block"
+    # loopback wins even if someone lists it as blocked
+    assert decide("localhost", default_action="allow", allowed_domains=(), blocked_domains=("localhost",)).action == "allow"

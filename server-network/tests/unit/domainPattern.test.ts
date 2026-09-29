@@ -102,6 +102,14 @@ describe('matching (§5)', () => {
 });
 
 describe('decide (§5 decision)', () => {
+  it('loopback is always allowed, even under block-all or when listed as blocked', () => {
+    const blockAll = content([], [], 'block');
+    for (const host of ['localhost', 'app.localhost', 'LOCALHOST.', '127.0.0.1', '127.5.9.1', '::1', '[::1]']) {
+      expect(decide(host, blockAll)).toMatchObject({ action: 'allow', reason: 'management' });
+    }
+    expect(decide('example.com', blockAll).action).toBe('block');
+    expect(decide('localhost', content([], ['localhost'])).action).toBe('allow');
+  });
   it('contract example: exact a.example.com (3,1) beats *.example.com (3,0)', () => {
     expect(decide('a.example.com', content(['a.example.com'], ['*.example.com'])).action).toBe('allow');
     expect(decide('a.example.com', content(['*.example.com'], ['a.example.com'])).action).toBe('block');
