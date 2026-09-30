@@ -11,10 +11,10 @@
   "scripts": {
     "dev": "concurrently -k -n api,web -c blue,magenta \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "tsx watch src/server.ts",
-    "dev:web": "next dev web --port ${WEB_PORT:-3001}",
+    "dev:web": "tsx scripts/next-web.ts dev",
     "start": "concurrently -k -n api,web -c blue,magenta \"npm:start:api\" \"npm:start:web\"",
     "start:api": "node dist/src/server.js",
-    "start:web": "next start web --port ${WEB_PORT:-3001}",
+    "start:web": "tsx scripts/next-web.ts start",
     "build": "npm run build:api && npm run build:web",
     "build:api": "tsc -p tsconfig.build.json",
     "build:web": "next build web",
