@@ -1,19 +1,23 @@
 ; Inno Setup 6 script: SoftProIt Network SERVICE (Windows x64) — install on every computer to control.
 ;
 ; Installs SoftProIt.network.conducted.exe (background service; internal service name
-; OrganizationNetworkAgent, auto start, recovery, restrictive service DACL), collects the three
-; org-token settings and writes them to the config the service reads (agent.env).
+; OrganizationNetworkAgent, auto start, recovery, restrictive service DACL) and writes the
+; org-token config the service reads (agent.env). No questions: ADMIN_SERVER, ACCESS_TOKE and
+; CACHE_EXPIRATION_TIME_IN_MINUTE are baked in at build time from os-apps\.env (build.ps1
+; generates build\installer-config-service.iss). Every install/upgrade rewrites agent.env with them.
 ; The desktop admin app has its own installer: SoftProIt.Network.Admin.iss.
 ;
 ; Build: scripts\build.ps1 -Target Service -Installer   (or build-now\build-service-setup.bat)
-;   ISCC.exe /DAppVersion=1.2.3 installer\SoftProIt.Network.Service.iss
 ;
-; Silent install:
-;   setup.exe /VERYSILENT /SERVER=https://admin.example.com /TOKENFILE=C:\secure\token.txt /CACHE=5
-; (Prefer /TOKENFILE over /TOKEN=...: command lines are visible to other processes.)
+; Silent install: setup.exe /VERYSILENT
+; Optional overrides: /SERVER=https://... /TOKENFILE=C:\secure\token.txt /CACHE=5
 
 #ifndef AppVersion
   #define AppVersion "1.0.0"
+#endif
+#include "..\build\installer-config-service.iss"
+#ifndef CfgServer
+  #error build\installer-config-service.iss must define CfgServer, CfgToken and CfgCache (run scripts\build.ps1)
 #endif
 #define AppName "SoftProIt Network Service"
 #define ServiceName "OrganizationNetworkAgent"
@@ -39,6 +43,9 @@ OutputBaseFilename=SoftProIt-Network-Service-{#AppVersion}-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+; Nothing to ask: the only page shows the baked-in settings (read-only) before Install.
+DisableWelcomePage=yes
+DisableReadyPage=no
 UninstallDisplayIcon={app}\conducted\{#SvcExeName}
 UninstallDisplayName={#AppName}
 CloseApplications=no
@@ -65,28 +72,11 @@ Filename: "{app}\conducted\{#SvcExeName}"; Parameters: "uninstall"; Flags: runhi
 ; reinstall keeps state. Delete C:\ProgramData\OrganizationNetworkAgent to wipe.
 
 [Code]
-var
-  ConfigPage: TInputQueryWizardPage;
-
-function ExistingConfig(): Boolean;
+{ Settings baked in at build time (os-apps\.env); /SERVER= /TOKENFILE= /CACHE= may override. }
+function ServerValue(): String;
 begin
-  Result := FileExists(ExpandConstant('{#DataRoot}\config\agent.env'));
-end;
-
-procedure InitializeWizard();
-begin
-  ConfigPage := CreateInputQueryPage(wpSelectTasks,
-    'Organization configuration (unattended / org-token mode)',
-    'Connect this computer to your organization''s admin server.',
-    'Enter the admin server URL and the organization access token from the admin ' +
-    'console (Organizations -> Generate token). ' +
-    'Leave all fields empty on an upgrade to keep the existing configuration.');
-  ConfigPage.Add('Admin server (e.g. https://admin.example.com):', False);
-  ConfigPage.Add('Access token (nat_...):', True);
-  ConfigPage.Add('Policy refresh interval, minutes (default 5):', False);
-  ConfigPage.Values[0] := ExpandConstant('{param:SERVER|}');
-  ConfigPage.Values[1] := ExpandConstant('{param:TOKEN|}');
-  ConfigPage.Values[2] := ExpandConstant('{param:CACHE|5}');
+  Result := Trim(ExpandConstant('{param:SERVER|}'));
+  if Result = '' then Result := '{#CfgServer}';
 end;
 
 function TokenValue(): String;
@@ -94,35 +84,48 @@ var
   S: AnsiString;
   F: String;
 begin
-  Result := Trim(ConfigPage.Values[1]);
+  Result := '{#CfgToken}';
   F := ExpandConstant('{param:TOKENFILE|}');
-  if (Result = '') and (F <> '') and LoadStringFromFile(F, S) then
+  if (F <> '') and LoadStringFromFile(F, S) then
     Result := Trim(String(S));
 end;
 
-function AllEmpty(): Boolean;
+function CacheValue(): String;
 begin
-  Result := (Trim(ConfigPage.Values[0]) = '') and (TokenValue() = '');
+  Result := Trim(ExpandConstant('{param:CACHE|}'));
+  if Result = '' then Result := '{#CfgCache}';
 end;
 
-function NextButtonClick(CurPageID: Integer): Boolean;
-var
-  Url: String;
+{ Shown values are limited on purpose: the server only by its first 10 characters, never the token. }
+function ShortServer(): String;
 begin
+  Result := ServerValue();
+  if Length(Result) > 10 then Result := Copy(Result, 1, 10) + '...';
+end;
+
+function CodeValue(): String;
+begin
+  Result := '{#CfgCode}';
+  if Result = '' then Result := '(not set)';
+end;
+
+{ Ready page: identify this build (read-only; nothing to enter). }
+function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo,
+  MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
+begin
+  Result := 'This computer will be set up with:' + NewLine + NewLine +
+    Space + 'ADMIN_SERVER:                     ' + ShortServer() + NewLine +
+    Space + 'CACHE_EXPIRATION_TIME_IN_MINUTE:  ' + CacheValue() + NewLine +
+    Space + 'CODE_NUMBER:                      ' + CodeValue() + NewLine +
+    Space + 'BUILD_VERSION:                    ' + '{#AppVersion}' + NewLine + NewLine +
+    MemoDirInfo;
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  Log('Settings: ADMIN_SERVER=' + ShortServer() + ', CACHE_EXPIRATION_TIME_IN_MINUTE=' + CacheValue() +
+    ', CODE_NUMBER=' + CodeValue() + ', BUILD_VERSION={#AppVersion}');
   Result := True;
-  if CurPageID <> ConfigPage.ID then Exit;
-  if AllEmpty() and ExistingConfig() then Exit;
-  Url := Lowercase(Trim(ConfigPage.Values[0]));
-  if (Pos('https://', Url) <> 1) and (Pos('http://', Url) <> 1) then
-  begin
-    MsgBox('Admin server must be an http(s):// URL (https recommended for production).', mbError, MB_OK);
-    Result := False;
-  end
-  else if TokenValue() = '' then
-  begin
-    MsgBox('Access token is required.', mbError, MB_OK);
-    Result := False;
-  end;
 end;
 
 function RunTool(const Exe, Params: String): Integer;
@@ -168,12 +171,10 @@ procedure WriteConfig();
 var
   EnvFile, Url, Cache, Content: String;
 begin
-  if AllEmpty() and ExistingConfig() then Exit;
   EnvFile := ExpandConstant('{#DataRoot}\config\agent.env');
-  Url := Trim(ConfigPage.Values[0]);
-  Cache := Trim(ConfigPage.Values[2]);
-  if Cache = '' then Cache := '5';
-  Content := '# Managed by SoftProIt Network setup (org-token mode).' + #13#10;
+  Url := ServerValue();
+  Cache := CacheValue();
+  Content := '# Managed by SoftProIt Network Service setup (org-token mode).' + #13#10;
   Content := Content + 'ADMIN_SERVER="' + Url + '"' + #13#10;
   Content := Content + 'ACCESS_TOKE="' + TokenValue() + '"' + #13#10;
   Content := Content + 'CACHE_EXPIRATION_TIME_IN_MINUTE="' + Cache + '"' + #13#10;

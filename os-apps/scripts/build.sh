@@ -48,6 +48,40 @@ if ! [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
   exit 2
 fi
 want() { [ "$TARGET" = all ] || [ "$TARGET" = "$1" ]; }
+
+# Installer settings baked in from os-apps/.env (environment wins) so installing asks nothing.
+# Checked before the slow build.
+CFG_SERVER="${ADMIN_SERVER:-$(env_value ADMIN_SERVER)}"
+CFG_TOKEN="${ACCESS_TOKE:-$(env_value ACCESS_TOKE)}"
+CFG_CACHE="${CACHE_EXPIRATION_TIME_IN_MINUTE:-$(env_value CACHE_EXPIRATION_TIME_IN_MINUTE)}"
+CFG_CACHE="${CFG_CACHE:-5}"
+CFG_CODE="${CODE_NUMBER:-$(env_value CODE_NUMBER)}"   # display only: identifies the build
+# What installers show: the server only by its first 10 characters, never the token.
+CFG_SERVER_SHORT="$CFG_SERVER"
+[ "${#CFG_SERVER}" -gt 10 ] && CFG_SERVER_SHORT="${CFG_SERVER:0:10}..."
+settings_text() { # $1 = heading
+  printf '%s\n' "$1"
+  printf '  ADMIN_SERVER:                     %s\n' "$CFG_SERVER_SHORT"
+  printf '  CACHE_EXPIRATION_TIME_IN_MINUTE:  %s\n' "$CFG_CACHE"
+  printf '  CODE_NUMBER:                      %s\n' "${CFG_CODE:-(not set)}"
+  printf '  BUILD_VERSION:                    %s\n\n' "$VERSION"
+}
+if [ "$MAKE_DMG" = 1 ]; then
+  if [ "${#CFG_CODE}" -gt 64 ] || [[ "$CFG_CODE" == *[\"\']* ]]; then
+    echo "CODE_NUMBER in os-apps/.env must be at most 64 characters, without quotes" >&2; exit 2
+  fi
+  if ! [[ "$CFG_SERVER" =~ ^https?://[^[:space:]\"\']+$ ]]; then
+    echo "ADMIN_SERVER in os-apps/.env must be an http(s):// URL (got '$CFG_SERVER')" >&2; exit 2
+  fi
+  if want service; then
+    if ! [[ "$CFG_TOKEN" =~ ^nat_[^[:space:]\"\']+$ ]] || [ "${#CFG_TOKEN}" -gt 512 ]; then
+      echo "ACCESS_TOKE in os-apps/.env must be the organization access token (nat_...). Admin console: Organizations > Generate token." >&2; exit 2
+    fi
+    if ! [[ "$CFG_CACHE" =~ ^[0-9]+$ ]] || [ "$CFG_CACHE" -lt 1 ] || [ "$CFG_CACHE" -gt 1440 ]; then
+      echo "CACHE_EXPIRATION_TIME_IN_MINUTE in os-apps/.env must be 1-1440 (got '$CFG_CACHE')" >&2; exit 2
+    fi
+  fi
+fi
 echo "Building $TARGET version $VERSION"
 
 # Finder-launched Terminals may lack Homebrew paths; keep the user's PATH first.
@@ -145,14 +179,14 @@ if want admin; then
   /usr/bin/plutil -replace CFBundleVersion -string "$VERSION" "$APP/Contents/Info.plist"
   # The app reads admin.env next to its executable: a dragged-in app cannot be configured by an
   # installer, and the service's agent.env is root-only. Server URL only — never the token.
-  SERVER="${ADMIN_SERVER:-$(env_value ADMIN_SERVER)}"
-  if [ -n "$SERVER" ]; then
-    printf '# Embedded at build time. Server URL only; no secrets.\nADMIN_SERVER="%s"\n' "$SERVER" > "$APP/Contents/MacOS/admin.env"
-    echo "Embedded ADMIN_SERVER=$SERVER"
-  else
-    echo "WARNING: ADMIN_SERVER is not set in os-apps/.env; the app will start unconfigured." >&2
-  fi
+  printf '# Embedded at build time. Server URL only; no secrets.\nADMIN_SERVER="%s"\n' "$CFG_SERVER" > "$APP/Contents/MacOS/admin.env"
+  echo "Embedded ADMIN_SERVER=$CFG_SERVER"
   ln -s /Applications "$STAGE/Applications"
+  {
+    settings_text "SoftProIt Network Admin is set up with:"
+    printf 'Install: drag "SoftProIt Network Admin" onto Applications.\n'
+    printf 'First start of an unsigned build: Control-click the app > Open > Open.\n'
+  } > "$STAGE/README.txt"
   step "Creating admin DMG"
   make_dmg "SoftProIt Network Admin $VERSION" "$STAGE" "$OUT/SoftProIt-Network-Admin-$VERSION.dmg"
 fi
@@ -165,15 +199,22 @@ if want service; then
   stage_copy "$ROOT/dist/SoftProIt.network.conducted" "$PAYLOAD"
   cp "$ROOT/installer/macos/preinstall" "$ROOT/installer/macos/postinstall" "$STAGE/scripts/"
   chmod 755 "$STAGE/scripts/preinstall" "$STAGE/scripts/postinstall"
-  # Pre-fill for the install-time dialog (server URL only; the token is always asked for).
-  printf 'DEFAULT_SERVER=%q\n' "${ADMIN_SERVER:-$(env_value ADMIN_SERVER)}" > "$STAGE/scripts/defaults.env"
+  # Baked-in config the postinstall writes to agent.env (no questions at install time).
+  # Lives in the .pkg's scripts, readable only by root when the package runs.
+  ( umask 077
+    printf 'CFG_SERVER=%q\nCFG_TOKEN=%q\nCFG_CACHE=%q\n' "$CFG_SERVER" "$CFG_TOKEN" "$CFG_CACHE" > "$STAGE/scripts/config.env" )
+  echo "Baked in: ADMIN_SERVER=$CFG_SERVER, CACHE_EXPIRATION_TIME_IN_MINUTE=$CFG_CACHE, ACCESS_TOKE=nat_..."
 
   step "Building service .pkg (pkgbuild)"
   PKG="$STAGE/dmg/Install SoftProIt Network Service.pkg"
   /usr/bin/pkgbuild --root "$STAGE/root" --scripts "$STAGE/scripts" \
     --identifier com.softproit.network.conducted --version "$VERSION" \
     --install-location / "$PKG" </dev/null
-  cp "$ROOT/installer/macos/README-service.txt" "$STAGE/dmg/README.txt"
+  # README.txt starts with the identifying settings so you can see what a DMG is for.
+  {
+    settings_text "This package sets up the Mac with:"
+    cat "$ROOT/installer/macos/README-service.txt"
+  } > "$STAGE/dmg/README.txt"
 
   step "Creating service DMG"
   make_dmg "SoftProIt Network Service $VERSION" "$STAGE/dmg" "$OUT/SoftProIt-Network-Service-$VERSION.dmg"

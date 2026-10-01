@@ -1,14 +1,14 @@
 #!/bin/bash
 # SoftProIt Network Service .pkg — runs as root after the payload is in
-# /usr/local/softproit/SoftProIt.network.conducted/.
+# /usr/local/softproit/SoftProIt.network.conducted/. Asks nothing:
 #
 # 1. Creates the root-only data root (/Library/Application Support/OrganizationNetworkAgent).
-# 2. If there is no agent.env yet, asks the logged-in user for the admin server URL and the
-#    organization access token (dialogs) and writes the org-token config. Upgrades keep the
-#    existing config. The token is never stored in the .pkg.
+# 2. Writes agent.env from config.env, baked in at build time from os-apps/.env
+#    (ADMIN_SERVER, ACCESS_TOKE, CACHE_EXPIRATION_TIME_IN_MINUTE). Every install/upgrade
+#    rewrites it, like the Windows installer.
 # 3. Registers and starts the LaunchDaemon (com.softproit.network.conducted).
 #
-# Always exits 0 so Installer reports success; details go to /var/log/softproit-network-install.log.
+# Details go to /var/log/softproit-network-install.log.
 
 APP=/usr/local/softproit/SoftProIt.network.conducted/SoftProIt.network.conducted
 DATA="/Library/Application Support/OrganizationNetworkAgent"
@@ -21,64 +21,31 @@ mkdir -p "$DATA/config" "$DATA/data" "$DATA/logs"
 chown -R root:wheel "$DATA"
 chmod -R go-rwx "$DATA"
 
-DEFAULT_SERVER=""
+CFG_SERVER="" CFG_TOKEN="" CFG_CACHE=5
 # shellcheck source=/dev/null
-[ -f "$(dirname "$0")/defaults.env" ] && . "$(dirname "$0")/defaults.env"
-
-CONSOLE_USER=$(stat -f%Su /dev/console)
-CONSOLE_UID=$(id -u "$CONSOLE_USER" 2>/dev/null || true)
-
-# Show a dialog as the logged-in user. $1 = prompt, $2 = default answer, $3 = "hidden" to mask.
-ask() {
-  [ -n "$CONSOLE_UID" ] && [ "$CONSOLE_USER" != "root" ] || return 1
-  local prompt default hidden
-  prompt=$(printf '%s' "$1" | tr -d '"\\')
-  default=$(printf '%s' "$2" | tr -d '"\\')
-  hidden=""
-  [ "${3:-}" = hidden ] && hidden="with hidden answer"
-  launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" /usr/bin/osascript -e \
-    "text returned of (display dialog \"$prompt\" default answer \"$default\" $hidden with title \"SoftProIt Network Service\" buttons {\"Cancel\", \"OK\"} default button \"OK\")" 2>/dev/null
-}
-
-tell() {
-  [ -n "$CONSOLE_UID" ] && [ "$CONSOLE_USER" != "root" ] || return 0
-  launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" /usr/bin/osascript -e \
-    "display dialog \"$(printf '%s' "$1" | tr -d '"\\')\" with title \"SoftProIt Network Service\" buttons {\"OK\"} default button \"OK\"" >/dev/null 2>&1 || true
-}
-
-if [ ! -s "$ENV_FILE" ]; then
-  SERVER=$(ask "Admin server URL (e.g. https://admin.example.com):" "$DEFAULT_SERVER") || SERVER=""
-  SERVER=$(printf '%s' "$SERVER" | tr -d '[:space:]"')
-  TOKEN=""
-  if [ -n "$SERVER" ]; then
-    TOKEN=$(ask "Organization access token (nat_...). Admin console: Organizations > Generate token." "" hidden) || TOKEN=""
-    TOKEN=$(printf '%s' "$TOKEN" | tr -d '[:space:]"')
-  fi
-  case "$SERVER" in http://*|https://*) ;; *) SERVER="" ;; esac
-  if [ -z "$SERVER" ] || [ -z "$TOKEN" ]; then
-    echo "not configured (dialog cancelled or invalid input); daemon not started"
-    tell "The service was installed but NOT configured, so it was not started. Run the installer again and enter the admin server URL and access token."
-    exit 0
-  fi
-  umask 077
-  {
-    echo "# Managed by SoftProIt Network Service setup (org-token mode)."
-    echo "ADMIN_SERVER=\"$SERVER\""
-    echo "ACCESS_TOKE=\"$TOKEN\""
-    echo "CACHE_EXPIRATION_TIME_IN_MINUTE=\"5\""
-    echo "NAM_SECRET_PROTECTOR=\"file-key\""
-    case "$SERVER" in https://*) ;; *) echo "NAM_ALLOW_INSECURE_HTTP=\"true\"" ;; esac
-  } > "$ENV_FILE"
-  chown root:wheel "$ENV_FILE"
-  chmod 600 "$ENV_FILE"
-  echo "wrote $ENV_FILE (server $SERVER)"
+[ -f "$(dirname "$0")/config.env" ] && . "$(dirname "$0")/config.env"
+if [ -z "$CFG_SERVER" ] || [ -z "$CFG_TOKEN" ]; then
+  echo "package was built without ADMIN_SERVER/ACCESS_TOKE; not configured"
+  exit 1   # Installer reports the failure instead of leaving an unconfigured daemon
 fi
+
+umask 077
+{
+  echo "# Managed by SoftProIt Network Service setup (org-token mode)."
+  echo "ADMIN_SERVER=\"$CFG_SERVER\""
+  echo "ACCESS_TOKE=\"$CFG_TOKEN\""
+  echo "CACHE_EXPIRATION_TIME_IN_MINUTE=\"$CFG_CACHE\""
+  echo "NAM_SECRET_PROTECTOR=\"file-key\""
+  case "$CFG_SERVER" in https://*) ;; *) echo "NAM_ALLOW_INSECURE_HTTP=\"true\"" ;; esac
+} > "$ENV_FILE"
+chown root:wheel "$ENV_FILE"
+chmod 600 "$ENV_FILE"
+echo "wrote $ENV_FILE (server $CFG_SERVER, refresh $CFG_CACHE min)"
 
 "$APP" uninstall || true
-if "$APP" install; then
-  "$APP" start || echo "start did not report RUNNING; see $DATA/logs"
-else
+if ! "$APP" install; then
   echo "daemon registration failed"
-  tell "The service could not be registered with launchd. See /var/log/softproit-network-install.log."
+  exit 1
 fi
+"$APP" start || echo "start did not report RUNNING; see $DATA/logs"
 exit 0

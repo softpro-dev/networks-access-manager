@@ -2,9 +2,7 @@ SoftProIt Network Service (macOS)
 =================================
 
 Install:  double-click "Install SoftProIt Network Service.pkg" and follow the steps.
-          You will be asked for:
-            - the admin server URL (e.g. https://admin.example.com)
-            - the organization access token (admin console: Organizations > Generate token)
+          Nothing to enter: the settings above were built into the package.
 
 If macOS says the package "cannot be opened because it is from an unidentified developer":
           right-click (Control-click) the .pkg > Open > Open.
