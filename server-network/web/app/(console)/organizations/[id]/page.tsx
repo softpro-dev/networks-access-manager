@@ -61,7 +61,7 @@ export default function OrganizationDetailPage() {
           <span className="stat-value">{o.stats?.policies ?? '—'}</span>
         </Link>
       </div>
-      <div className="grid-2">
+      <div>
         <Card title="Details">
           <KeyValue
             rows={[
