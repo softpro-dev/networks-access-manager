@@ -311,6 +311,25 @@ export async function archiveVersion(ctx: AppContext, p: AdminPrincipal, id: str
 }
 
 /** Rollback: point activeVersionId at another (earlier) PUBLISHED version. Agents accept lower versions. */
+/**
+ * Permanently delete a restriction with all its versions and assignments (same permission as editing
+ * it). Device status rows keep their history with the policy link cleared (SetNull). Agents get the
+ * re-merged policy on their next fetch; the audit log keeps the deletion with code/name/counts.
+ */
+export async function deletePolicy(ctx: AppContext, p: AdminPrincipal, id: string, ip: string) {
+  const policy = await loadPolicy(ctx, p, id);
+  const counts = await ctx.prisma.$transaction(async (tx) => {
+    const assignments = await tx.policyAssignment.deleteMany({ where: { policyId: policy.id } });
+    // Versions are Restrict-protected and one is referenced as active: unlink it first.
+    await tx.policy.update({ where: { id: policy.id }, data: { activeVersionId: null } });
+    const versions = await tx.policyVersion.deleteMany({ where: { policyId: policy.id } });
+    await tx.policy.delete({ where: { id: policy.id } });
+    return { assignments: assignments.count, versions: versions.count };
+  });
+  await audit(ctx, p, policy, AuditAction.POLICY_DELETED, ip, { name: policy.name, kind: policy.kind, ...counts });
+  return { id: policy.id, code: policy.code, ...counts };
+}
+
 export async function rollbackPolicy(ctx: AppContext, p: AdminPrincipal, id: string, targetVersion: number, ip: string) {
   const policy = await loadPolicy(ctx, p, id);
   const target = await loadVersion(ctx, id, targetVersion);

@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ApiError, del, get, patch, post, put } from '@/lib/api';
@@ -12,6 +12,7 @@ import type { Issue, OrgAssignment, PolicyDetail, PolicyVersion, SavedPolicy } f
 import { Alert, Badge, Button, Card, ConfirmDialog, Empty, ErrorBox, Field, Modal, Mono, PageHeader, Spinner, StatusBadge } from '@/components/ui';
 import { useToast } from '@/components/toast';
 import { ContentSummary, KindBadge } from '@/components/EffectiveRules';
+import { DeleteRestrictionDialog } from '@/components/DeleteRestrictionDialog';
 import { clientErrors, RestrictionEditor, toContent, toForm, type RestrictionForm } from '@/components/RestrictionEditor';
 
 const RESOLVE_KEYS = [['devices'], ['device'], ['assignments'], ['analytics'], ['audit']];
@@ -136,6 +137,8 @@ export default function RestrictionDetailPage() {
   const [warnings, setWarnings] = useState<Issue[]>([]);
   const [serverErrors, setServerErrors] = useState<Issue[]>([]);
   const [confirm, setConfirm] = useState<{ kind: 'rollback'; version: number } | { kind: 'activate' | 'deactivate' } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const router = useRouter();
   const [viewing, setViewing] = useState<number | null>(null);
 
   // (Re)load the editor when another version becomes the base (after save / rollback).
@@ -229,10 +232,21 @@ export default function RestrictionDetailPage() {
           </>
         }
         actions={
-          <Button variant={p.is_active ? 'danger' : 'primary'} onClick={() => setConfirm({ kind: p.is_active ? 'deactivate' : 'activate' })}>
-            {p.is_active ? 'Deactivate' : 'Activate'}
-          </Button>
+          <div className="btn-row">
+            <Button variant={p.is_active ? 'danger' : 'primary'} onClick={() => setConfirm({ kind: p.is_active ? 'deactivate' : 'activate' })}>
+              {p.is_active ? 'Deactivate' : 'Activate'}
+            </Button>
+            <Button variant="danger" onClick={() => setDeleting(true)}>
+              Delete
+            </Button>
+          </div>
         }
+      />
+      <DeleteRestrictionDialog
+        restriction={deleting ? p : null}
+        assignmentCount={p.assignments.length}
+        onClose={() => setDeleting(false)}
+        onDeleted={() => router.push('/restrictions')}
       />
       {!p.is_active && <Alert tone="warn">This restriction is inactive: it is skipped for every computer it is assigned to until activated.</Alert>}
       {base && !base.is_active_version && <Alert tone="info">Version {base.version} is not published yet. Saving publishes it (as a new version) and computers start receiving it.</Alert>}

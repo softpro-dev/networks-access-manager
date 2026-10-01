@@ -33,7 +33,6 @@ export default function ConsoleLayout({ children }: { children: ReactNode }) {
     { href: '/computers', label: 'Computers' },
     { href: '/restrictions', label: 'Restrictions' },
     { href: '/access', label: 'Set access' },
-    { href: '/audit', label: 'Audit log' },
     isSuper ? { href: '/organizations', label: 'Organizations' } : { href: `/organizations/${user.organization_id}`, label: 'Organization' },
     { href: '/users', label: 'Administrators' },
   ];

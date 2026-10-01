@@ -171,6 +171,30 @@ describeDb('policy lifecycle, assignment and agent sync', () => {
     expect((await content()).blocked_domains).toEqual(['org.com']);
   });
 
+  it('deleting a restriction removes its versions and assignments (tenant-scoped, audited)', async () => {
+    const c = await api('POST', '/api/policies', { name: 'Temp', kind: 'BLACKLIST', publish: true, content: { blocked_domains: ['bad.com'] } });
+    expect(c.statusCode, c.body).toBe(201);
+    const id: string = c.json().id;
+    await api('POST', `/api/policies/${id}/versions`, {}); // a second (draft) version
+    expect((await api('POST', '/api/assignments/bulk', { policy_id: id, organization: true })).statusCode).toBe(201);
+
+    // Another organization's admin cannot see or delete it.
+    const orgB = (await createOrg(h.prisma, 'COMPANY-002')).id;
+    await createUser(h.prisma, 'b@example.com', 'ORGANIZATION_ADMIN', orgB);
+    const tb = await login(h.app, 'b@example.com');
+    expect((await h.app.inject({ method: 'DELETE', url: `/api/policies/${id}`, headers: bearer(tb) })).statusCode).toBe(404);
+
+    const d = await api('DELETE', `/api/policies/${id}`);
+    expect(d.statusCode, d.body).toBe(200);
+    expect(d.json()).toMatchObject({ code: 'POL-001', assignments: 1 });
+    expect(d.json().versions).toBeGreaterThanOrEqual(1);
+    expect(await h.prisma.policy.findUnique({ where: { id } })).toBeNull();
+    expect(await h.prisma.policyVersion.count({ where: { policyId: id } })).toBe(0);
+    expect(await h.prisma.policyAssignment.count({ where: { policyId: id } })).toBe(0);
+    expect((await api('GET', `/api/policies/${id}`)).statusCode).toBe(404);
+    expect(await h.prisma.auditLog.count({ where: { action: 'POLICY_DELETED', targetId: id } })).toBe(1);
+  });
+
   it('ad-hoc validation returns errors, warnings and decisions', async () => {
     const r = await api('POST', '/api/policies/validate', {
       content: { default_action: 'block', allowed_domains: ['company.com', '*.company.com'], blocked_domains: ['*.example.com'] },

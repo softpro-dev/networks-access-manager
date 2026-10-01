@@ -25,6 +25,7 @@ export async function policyRoutes(app: FastifyInstance) {
   });
   app.get('/api/policies/:id', async (req) => svc.getPolicy(ctx, getAdmin(req), id(req.params)));
   app.patch('/api/policies/:id', async (req) => svc.updatePolicy(ctx, getAdmin(req), id(req.params), parse(svc.updatePolicyBody, req.body), req.ip));
+  app.delete('/api/policies/:id', async (req) => svc.deletePolicy(ctx, getAdmin(req), id(req.params), req.ip));
   app.post('/api/policies/:id/activate', async (req) => svc.setPolicyActive(ctx, getAdmin(req), id(req.params), true, req.ip));
   app.post('/api/policies/:id/deactivate', async (req) => svc.setPolicyActive(ctx, getAdmin(req), id(req.params), false, req.ip));
   app.post('/api/policies/:id/rollback', async (req) =>

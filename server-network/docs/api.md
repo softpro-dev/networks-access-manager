@@ -164,6 +164,7 @@ All kinds also carry `enabled`, `default_action` and the four booleans `block_qu
 | `GET /api/policies/:id` | policy + `versions` (no content) + `assignments` |
 | `PATCH /api/policies/:id` | `{"name"?,"description"?}` (`kind` cannot change) |
 | `POST /api/policies/:id/activate` \| `/deactivate` | inactive restrictions are skipped for all computers |
+| `DELETE /api/policies/:id` | permanently deletes the restriction with **all its versions and assignments** → `{"id","code","assignments":n,"versions":n}`; audited `POLICY_DELETED`. Computers get the re-merged policy on their next fetch |
 | `GET /api/policies/:id/versions` / `GET .../versions/:version` | version incl. `content`, `content_sha256`, `etag` |
 | `POST /api/policies/:id/versions` | `{"from_version"?}` → new DRAFT = copy, version = max+1; 409 `DRAFT_EXISTS` |
 | `PUT /api/policies/:id/versions/:version` | `{"content":{...}}`; DRAFT only, else 409 `POLICY_VERSION_IMMUTABLE`; returns `warnings` |

@@ -33,7 +33,7 @@ function OrganizationsInner() {
       {orgs.isLoading ? (
         <Spinner />
       ) : !orgs.data?.items.length ? (
-        <Empty>No organizations yet. Create one, then generate a registration token for its agents.</Empty>
+        <Empty>No organizations yet. Create one, then generate its access token for the service installer.</Empty>
       ) : (
         <div className="table-wrap">
           <table className="table">

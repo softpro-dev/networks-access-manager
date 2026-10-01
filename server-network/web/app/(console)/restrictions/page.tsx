@@ -6,8 +6,9 @@ import { useOrgScope } from '@/lib/orgScope';
 import { absTime } from '@/lib/format';
 import { KIND_INFO, KINDS } from '@/lib/restrictions';
 import type { RestrictionKind } from '@/lib/types';
-import { Badge, Empty, ErrorBox, Mono, PageHeader, Spinner } from '@/components/ui';
+import { Badge, Button, Empty, ErrorBox, Mono, PageHeader, Spinner } from '@/components/ui';
 import { KindBadge } from '@/components/EffectiveRules';
+import { DeleteRestrictionDialog, type DeletableRestriction } from '@/components/DeleteRestrictionDialog';
 
 export default function RestrictionsPage() {
   const { orgId, isSuper } = useOrgScope();
@@ -15,6 +16,7 @@ export default function RestrictionsPage() {
   const assignments = useOrgAssignments(orgId);
   const [kind, setKind] = useState<RestrictionKind | ''>('');
   const [q, setQ] = useState('');
+  const [deleting, setDeleting] = useState<DeletableRestriction | null>(null);
 
   const counts = useMemo(() => {
     const m = new Map<string, number>();
@@ -76,6 +78,7 @@ export default function RestrictionsPage() {
                 <th>Version</th>
                 <th className="num">Assignments</th>
                 <th>Updated</th>
+                <th aria-label="Actions" />
               </tr>
             </thead>
             <tbody>
@@ -108,13 +111,19 @@ export default function RestrictionsPage() {
                     )}
                   </td>
                   <td>{absTime(p.updated_at)}</td>
+                  <td className="cell-actions">
+                    <Button size="sm" variant="danger" onClick={() => setDeleting(p)}>
+                      Delete
+                    </Button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
-      <p className="muted small">Restrictions cannot be deleted (their history is kept); deactivate one to stop it applying everywhere.</p>
+      <p className="muted small">Deleting a restriction also removes all its assignments and versions. To stop it applying only for now, deactivate it instead.</p>
+      <DeleteRestrictionDialog restriction={deleting} assignmentCount={deleting ? (counts.get(deleting.id) ?? 0) : undefined} onClose={() => setDeleting(null)} />
     </>
   );
 }

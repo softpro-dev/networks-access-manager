@@ -13,6 +13,16 @@ export function Providers({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (hadDevicesParam) stripConnectedDevicesParam();
   }, [hadDevicesParam]);
+  // No right-click menu on the page body; text fields keep it so copy/paste still works there.
+  useEffect(() => {
+    const onContextMenu = (e: MouseEvent) => {
+      const el = e.target instanceof Element ? e.target : null;
+      if (el?.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]')) return;
+      e.preventDefault();
+    };
+    document.addEventListener('contextmenu', onContextMenu);
+    return () => document.removeEventListener('contextmenu', onContextMenu);
+  }, []);
   const [qc] = useState(
     () =>
       new QueryClient({

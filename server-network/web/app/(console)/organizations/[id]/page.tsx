@@ -7,8 +7,8 @@ import { get } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { absTime } from '@/lib/format';
 import type { Organization } from '@/lib/types';
-import { Badge, Button, Card, ErrorBox, KeyValue, Mono, PageHeader, Spinner, StatusBadge } from '@/components/ui';
-import { LoginLinkButton, OrgFormDialog, OrgStatusDialog, RegistrationTokenControls, AccessTokenControls } from '@/components/OrgDialogs';
+import { Button, Card, ErrorBox, KeyValue, Mono, PageHeader, Spinner, StatusBadge } from '@/components/ui';
+import { LoginLinkButton, OrgFormDialog, OrgStatusDialog } from '@/components/OrgDialogs';
 import { setScopedOrg } from '@/lib/orgScope';
 
 export default function OrganizationDetailPage() {
@@ -72,20 +72,6 @@ export default function OrganizationDetailPage() {
               ['Updated', absTime(o.updated_at)],
             ]}
           />
-        </Card>
-        <Card title="Agent registration token">
-          <p>
-            {o.has_registration_token ? (
-              <Badge tone="green">Per-organization token set</Badge>
-            ) : (
-              <Badge tone="gray">No per-organization token — the server&apos;s global token (if configured) applies</Badge>
-            )}
-          </p>
-          <p className="muted small">
-            Agents send this token once when registering with organization code <Mono>{o.code}</Mono>. Registered devices still need approval. The raw value is shown only when generated.
-          </p>
-          <RegistrationTokenControls org={o} />
-          <AccessTokenControls org={o} />
         </Card>
       </div>
       {isSuper && (

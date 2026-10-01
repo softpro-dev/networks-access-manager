@@ -142,94 +142,10 @@ export function OrgStatusDialog({ org, onClose }: { org: Organization | null; on
   );
 }
 
-/** Generate (rotate) / clear the per-organization registration token. The raw token is shown exactly once. */
-export function RegistrationTokenControls({ org }: { org: Organization }) {
-  const [confirm, setConfirm] = useState<'rotate' | 'clear' | null>(null);
-  const [token, setToken] = useState<string | null>(null);
-  const rotate = useAction(() => post<{ organization: Organization; registration_token: string }>(`/organizations/${org.id}/registration-token`), {
-    invalidate: [['organizations'], ['organization', org.id]],
-    onSuccess: (r) => {
-      setConfirm(null);
-      setToken(r.registration_token);
-    },
-  });
-  const clear = useAction(() => del<Organization>(`/organizations/${org.id}/registration-token`), {
-    success: 'Registration token cleared',
-    invalidate: [['organizations'], ['organization', org.id]],
-    onSuccess: () => setConfirm(null),
-  });
-  return (
-    <>
-      <div className="btn-row">
-        <Button
-          size="sm"
-          variant="primary"
-          onClick={() => {
-            rotate.reset();
-            setConfirm('rotate');
-          }}
-        >
-          {org.has_registration_token ? 'Rotate token' : 'Generate token'}
-        </Button>
-        {org.has_registration_token && (
-          <Button
-            size="sm"
-            onClick={() => {
-              clear.reset();
-              setConfirm('clear');
-            }}
-          >
-            Clear
-          </Button>
-        )}
-      </div>
-      <ConfirmDialog
-        open={confirm === 'rotate'}
-        title={org.has_registration_token ? 'Rotate registration token' : 'Generate registration token'}
-        confirmLabel={org.has_registration_token ? 'Rotate' : 'Generate'}
-        destructive={org.has_registration_token}
-        busy={rotate.isPending}
-        error={rotate.error}
-        onClose={() => setConfirm(null)}
-        onConfirm={() => rotate.mutate(undefined)}
-      >
-        <p>
-          A new registration token for <strong>{org.code}</strong> will be generated and shown <strong>once</strong>.
-          {org.has_registration_token && ' The current token stops working immediately; agents already enrolled are not affected.'}
-        </p>
-      </ConfirmDialog>
-      <ConfirmDialog
-        open={confirm === 'clear'}
-        title="Clear registration token"
-        confirmLabel="Clear token"
-        destructive
-        busy={clear.isPending}
-        error={clear.error}
-        onClose={() => setConfirm(null)}
-        onConfirm={() => clear.mutate(undefined)}
-      >
-        <p>Remove the per-organization token? New agents for {org.code} will then need the server&apos;s global AGENT_REGISTRATION_TOKEN (if configured).</p>
-      </ConfirmDialog>
-      <Modal open={!!token} onClose={() => setToken(null)} title="Registration token" footer={<Button variant="primary" onClick={() => setToken(null)}>I have stored it</Button>}>
-        <div className="stack">
-          <Alert tone="warn" title="Copy it now">
-            This token is shown only once and cannot be retrieved later. Store it in the agent installer configuration or a password manager. Anyone with it can register devices (they still need approval).
-          </Alert>
-          <div className="secret-box">
-            <code className="mono secret">{token}</code>
-            {token && <CopyButton value={token} />}
-          </div>
-          <ErrorBox error={null} />
-        </div>
-      </Modal>
-    </>
-  );
-}
-
 /**
  * Organization service access token (used by SoftProIt.network.conducted). Generating or rotating
- * shows the raw token once in a dialog with a Copy button; only its hash is stored, so a lost token
- * must be rotated. Non-expiring; rotate or clear to revoke.
+ * shows the token in a dialog with a Copy button; "Copy Token" fetches it again later (stored
+ * encrypted). Non-expiring; rotate or clear to revoke.
  */
 /** Copies the organization's current access token (GET /organizations/:id/access-token, audited). */
 function CopyAccessTokenButton({ org }: { org: Organization }) {
