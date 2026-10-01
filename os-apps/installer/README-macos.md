@@ -6,6 +6,21 @@ a macOS build host with your Apple Developer credentials. Enforcement itself is 
 the `NotImplementedBackend` (no traffic filtering), and the launchd path has not been
 verified end-to-end on macOS in this build — treat it as buildable-and-documented.
 
+## Quick build: two .dmg files
+
+Double-click on the Mac (Finder opens Terminal):
+
+- `how-to/build-admin-dmg.command` → `SoftProIt-Network-Admin-<ver>.dmg` (drag the app to
+  Applications; the admin server URL from `os-apps/.env` is embedded, no secrets)
+- `how-to/build-service-dmg.command` → `SoftProIt-Network-Service-<ver>.dmg` (contains
+  `Install SoftProIt Network Service.pkg`; it installs the daemon as root, asks for the server URL
+  and access token, writes `agent.env`, and starts the LaunchDaemon — see `installer/macos/`)
+
+Both build with `scripts/build.sh --target admin|service --dmg`, take the version from
+`BUILD_VERSION` in `os-apps/.env`, and copy the DMG to `~/Downloads`. The packages are unsigned:
+users must Control-click → Open the first time, until you sign/notarize them (step 2). The
+manual steps below remain the reference for a signed `productbuild` package.
+
 ## 1. Build the apps
 
 ```bash

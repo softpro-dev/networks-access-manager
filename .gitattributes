@@ -1,0 +1,6 @@
+# Shell scripts must keep LF endings (they run on macOS/Linux); .bat files keep CRLF.
+*.sh text eol=lf
+*.command text eol=lf
+os-apps/installer/macos/preinstall text eol=lf
+os-apps/installer/macos/postinstall text eol=lf
+*.bat text eol=crlf

@@ -1,0 +1,5 @@
+#!/bin/bash
+# SoftProIt Network Service .pkg — runs as root before the payload is copied.
+# Stop a running daemon so an upgrade can replace its binaries.
+launchctl bootout system/com.softproit.network.conducted >/dev/null 2>&1 || true
+exit 0
