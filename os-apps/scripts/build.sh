@@ -12,7 +12,7 @@
 # PyInstaller does NOT cross-compile: run this ON macOS (scripts\build.ps1 builds the Windows
 # .exe). The DMGs are unsigned; codesign / notarize per installer/README-macos.md before
 # distributing outside your organization.
-set -euo pipefail
+set -Eeuo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
@@ -115,11 +115,32 @@ fi
 
 [ "$MAKE_DMG" = 1 ] || exit 0
 
+# Name the running step so a failure says where it happened (output is never hidden).
+STEP=""
+step() { STEP="$1"; echo; echo "==> $1"; }
+trap '[ -n "$STEP" ] && echo "FAILED during: $STEP" >&2' ERR
+
+# Staged copies must be readable/writable by the builder: PyInstaller keeps source permissions,
+# and some Python distributions (e.g. Anaconda) ship read-only files.
+stage_copy() { /usr/bin/ditto "$1" "$2" && chmod -R u+rwX,go+rX "$2"; }
+
+# hdiutil into a fresh temp dir first (never over an existing/locked image), then move into place.
+make_dmg() { # $1 volume name, $2 source folder, $3 output .dmg
+  local tmp
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/softproit-dmg.XXXXXX")"
+  /usr/bin/hdiutil create -volname "$1" -srcfolder "$2" -fs HFS+ -format UDZO -ov "$tmp/out.dmg" </dev/null
+  rm -f "$3"
+  mv "$tmp/out.dmg" "$3"
+  rm -rf "$tmp"
+  echo "DMG: $3"
+}
+
 if want admin; then
+  step "Staging admin app"
   STAGE="$ROOT/build/dmg-admin"
   APP="$STAGE/SoftProIt Network Admin.app"
   rm -rf "$STAGE" && mkdir -p "$STAGE"
-  cp -R "$ROOT/dist/SoftProIt.network.admin.app" "$APP"
+  stage_copy "$ROOT/dist/SoftProIt.network.admin.app" "$APP"
   /usr/bin/plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP/Contents/Info.plist"
   /usr/bin/plutil -replace CFBundleVersion -string "$VERSION" "$APP/Contents/Info.plist"
   # The app reads admin.env next to its executable: a dragged-in app cannot be configured by an
@@ -132,28 +153,29 @@ if want admin; then
     echo "WARNING: ADMIN_SERVER is not set in os-apps/.env; the app will start unconfigured." >&2
   fi
   ln -s /Applications "$STAGE/Applications"
-  DMG="$OUT/SoftProIt-Network-Admin-$VERSION.dmg"
-  rm -f "$DMG"
-  hdiutil create -volname "SoftProIt Network Admin $VERSION" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
-  echo "DMG: $DMG"
+  step "Creating admin DMG"
+  make_dmg "SoftProIt Network Admin $VERSION" "$STAGE" "$OUT/SoftProIt-Network-Admin-$VERSION.dmg"
 fi
 
 if want service; then
+  step "Staging service payload"
   STAGE="$ROOT/build/pkg-service"
   PAYLOAD="$STAGE/root/usr/local/softproit/SoftProIt.network.conducted"
-  rm -rf "$STAGE" && mkdir -p "$PAYLOAD" "$STAGE/scripts" "$STAGE/dmg"
-  cp -R "$ROOT/dist/SoftProIt.network.conducted/." "$PAYLOAD/"
+  rm -rf "$STAGE" && mkdir -p "$(dirname "$PAYLOAD")" "$STAGE/scripts" "$STAGE/dmg"
+  stage_copy "$ROOT/dist/SoftProIt.network.conducted" "$PAYLOAD"
   cp "$ROOT/installer/macos/preinstall" "$ROOT/installer/macos/postinstall" "$STAGE/scripts/"
   chmod 755 "$STAGE/scripts/preinstall" "$STAGE/scripts/postinstall"
   # Pre-fill for the install-time dialog (server URL only; the token is always asked for).
   printf 'DEFAULT_SERVER=%q\n' "${ADMIN_SERVER:-$(env_value ADMIN_SERVER)}" > "$STAGE/scripts/defaults.env"
+
+  step "Building service .pkg (pkgbuild)"
   PKG="$STAGE/dmg/Install SoftProIt Network Service.pkg"
-  pkgbuild --root "$STAGE/root" --scripts "$STAGE/scripts" \
+  /usr/bin/pkgbuild --root "$STAGE/root" --scripts "$STAGE/scripts" \
     --identifier com.softproit.network.conducted --version "$VERSION" \
-    --install-location / "$PKG" >/dev/null
+    --install-location / "$PKG" </dev/null
   cp "$ROOT/installer/macos/README-service.txt" "$STAGE/dmg/README.txt"
-  DMG="$OUT/SoftProIt-Network-Service-$VERSION.dmg"
-  rm -f "$DMG"
-  hdiutil create -volname "SoftProIt Network Service $VERSION" -srcfolder "$STAGE/dmg" -ov -format UDZO "$DMG" >/dev/null
-  echo "DMG: $DMG"
+
+  step "Creating service DMG"
+  make_dmg "SoftProIt Network Service $VERSION" "$STAGE/dmg" "$OUT/SoftProIt-Network-Service-$VERSION.dmg"
 fi
+STEP=""
