@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import type { z } from 'zod';
 import type { AppContext, DeviceIdentity } from '../../types.js';
 import { AuditAction, writeAudit } from '../../services/audit.js';
-import { EFFECTIVE_POLICY_ID, resolveEffectivePolicy, type EffectivePolicy } from '../../services/policyResolution.js';
+import { EFFECTIVE_POLICY_ID, markDeviceAssignmentsSynced, resolveEffectivePolicy, type EffectivePolicy } from '../../services/policyResolution.js';
 import { normalizeMac } from '../../domain/mac.js';
 import { generateDeviceToken, hashEnrollmentSecret } from '../../domain/deviceToken.js';
 import { canonicalSha256 } from '../../domain/canonicalJson.js';
@@ -209,6 +209,8 @@ export async function policyDocument(ctx: AppContext, dev: DeviceIdentity) {
     // Stored content no longer hashes to its digest: never ship it.
     throw new AppError(500, 'INTERNAL_ERROR', 'Policy integrity check failed');
   }
+  // Served either in full or as 304 (the device already has it): both mean it is synced.
+  await markDeviceAssignmentsSynced(ctx.prisma, { id: dev.deviceId, organizationId: dev.organizationId }, e.sources.map((s) => s.policy_id));
   const etag = makePolicyEtag(EFFECTIVE_POLICY_ID, e.version, sha);
   return {
     etag,
@@ -306,7 +308,7 @@ export async function ackPolicy(ctx: AppContext, dev: DeviceIdentity, body: z.in
 }
 
 // ---------------- organization service (access-token) policy ----------------
-import { resolveOrgEffectivePolicy } from '../../services/policyResolution.js';
+import { markOrgAssignmentsSynced, resolveOrgEffectivePolicy } from '../../services/policyResolution.js';
 import { parseAccessTokenBearer } from '../../domain/deviceToken.js';
 
 const invalidAccess = () => new AppError(401, 'INVALID_ACCESS_TOKEN', 'Invalid or revoked organization access token');
@@ -325,6 +327,8 @@ export async function orgPolicyDocument(ctx: AppContext, org: { id: string; code
   const e = await resolveOrgEffectivePolicy(ctx.prisma, org.id);
   if (!e) return null;
   if (canonicalSha256(e.content) !== e.contentSha256) throw new AppError(500, 'INTERNAL_ERROR', 'Policy integrity check failed');
+  // Served either in full or as 304 (the service already has it): both mean it is synced.
+  await markOrgAssignmentsSynced(ctx.prisma, org.id, e.sources.map((s) => s.policy_id));
   const etag = makePolicyEtag(EFFECTIVE_POLICY_ID, e.version, e.contentSha256);
   return {
     etag,

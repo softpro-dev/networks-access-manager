@@ -221,6 +221,8 @@ export interface Assignment {
   target_group_id: string | null;
   target_device_id: string | null;
   priority: number;
+  /** a background service has fetched a policy containing this restriction since it last changed */
+  synced: boolean;
   created_by_id: string | null;
   created_at: string;
 }

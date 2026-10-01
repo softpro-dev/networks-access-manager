@@ -279,6 +279,9 @@ model PolicyAssignment {
   targetDeviceId String?
   targetDevice   Device?         @relation(fields: [targetDeviceId], references: [id], onDelete: Cascade)
   priority       Int             @default(0)
+  /// true once a background service has fetched a policy that includes this restriction (200 or 304);
+  /// reset to false when the restriction's active version or active flag changes
+  synced         Boolean         @default(false)
   createdById    String?
   createdBy      User?           @relation("AssignmentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   createdAt      DateTime        @default(now())

@@ -10,6 +10,7 @@ import { makePolicyEtag } from '../../domain/etag.js';
 import { AuditAction, type AuditActionName, writeAudit } from '../../services/audit.js';
 import { badRequest, conflict, notFound } from '../../utils/errors.js';
 import { iso, POLICY_CODE_RE } from '../../utils/http.js';
+import { markPolicyUnsynced } from '../../services/policyResolution.js';
 
 // ---------- schemas ----------
 export const createPolicyBody = z
@@ -100,6 +101,8 @@ function serializeAssignment(a: PolicyAssignment) {
     target_group_id: a.targetGroupId,
     target_device_id: a.targetDeviceId,
     priority: a.priority,
+    /** a background service has fetched a policy containing this restriction since it last changed */
+    synced: a.synced,
     created_by_id: a.createdById,
     created_at: iso(a.createdAt),
   };
@@ -216,6 +219,7 @@ export async function updatePolicy(ctx: AppContext, p: AdminPrincipal, id: strin
 export async function setPolicyActive(ctx: AppContext, p: AdminPrincipal, id: string, active: boolean, ip: string) {
   const policy = await loadPolicy(ctx, p, id);
   await ctx.prisma.policy.update({ where: { id: policy.id }, data: { isActive: active } });
+  await markPolicyUnsynced(ctx.prisma, policy.id); // agents must pick up the (de)activation
   await audit(ctx, p, policy, active ? AuditAction.POLICY_ACTIVATED : AuditAction.POLICY_DEACTIVATED, ip);
   return getPolicy(ctx, p, id);
 }
@@ -290,6 +294,7 @@ export async function publishVersion(ctx: AppContext, p: AdminPrincipal, id: str
     });
     if (r.count !== 1) throw conflict('POLICY_VERSION_IMMUTABLE', 'Version is no longer a draft');
     await tx.policy.update({ where: { id: policy.id }, data: { activeVersionId: v.id } });
+    await markPolicyUnsynced(tx, policy.id); // agents must fetch the new version
   });
   await audit(ctx, p, policy, AuditAction.POLICY_PUBLISHED, ip, { version, content_sha256: sha, previous_active_version: policy.activeVersion?.version ?? null });
   return { ...serializeVersion(await loadVersion(ctx, id, version), { ...policy, activeVersionId: v.id }), warnings: validated.warnings };
@@ -315,6 +320,7 @@ export async function rollbackPolicy(ctx: AppContext, p: AdminPrincipal, id: str
     throw conflict('INVALID_VERSION_STATE', 'Rollback target must be earlier than the active version');
   }
   await ctx.prisma.policy.update({ where: { id: policy.id }, data: { activeVersionId: target.id } });
+  await markPolicyUnsynced(ctx.prisma, policy.id); // agents must fetch the rolled-back version
   await audit(ctx, p, policy, AuditAction.POLICY_ROLLED_BACK, ip, { from_version: policy.activeVersion?.version ?? null, to_version: targetVersion });
   return getPolicy(ctx, p, id);
 }
@@ -343,6 +349,7 @@ export async function saveAndPublish(ctx: AppContext, p: AdminPrincipal, id: str
       },
     });
     await tx.policy.update({ where: { id: policy.id }, data: { activeVersionId: v.id } });
+    await markPolicyUnsynced(tx, policy.id); // agents must fetch the new version
     return v.version;
   });
   await audit(ctx, p, policy, AuditAction.POLICY_PUBLISHED, ip, { version, content_sha256: validated.content_sha256, previous_active_version: policy.activeVersion?.version ?? null });

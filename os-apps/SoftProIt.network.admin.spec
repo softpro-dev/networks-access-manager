@@ -51,6 +51,8 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,          # a windowed desktop app, no console
+    # Window/taskbar, Start menu and desktop-shortcut icon (scripts/make_icons.py).
+    icon="assets/app-icon.ico" if sys.platform == "win32" else None,
     uac_admin=False,
     version=None,
 )
@@ -69,7 +71,7 @@ if sys.platform == "darwin":
     app = BUNDLE(
         coll,
         name="SoftProIt.network.admin.app",
-        icon=None,
+        icon="assets/app-icon.icns",  # Dock / Finder icon (scripts/make_icons.py)
         bundle_identifier="com.softproit.network.admin",
         info_plist={
             "CFBundleName": "SoftProIt Network Admin",

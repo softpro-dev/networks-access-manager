@@ -22,7 +22,7 @@ import { useOrgScope } from '@/lib/orgScope';
 import { deviceName, plural } from '@/lib/format';
 import { KIND_INFO } from '@/lib/restrictions';
 import type { Device, DeviceDetail, List, OrgAssignment, Page, Policy } from '@/lib/types';
-import { Badge, Button, Card, Empty, ErrorBox, Modal, PageHeader, Spinner, StatusBadge } from '@/components/ui';
+import { Badge, Button, Card, ConfirmDialog, Empty, ErrorBox, Modal, PageHeader, Spinner, StatusBadge } from '@/components/ui';
 import { useToast } from '@/components/toast';
 import { OrgPicker } from '@/components/OrgPicker';
 import { useGroups } from '@/components/ComputerDialogs';
@@ -94,7 +94,20 @@ function DropZone({ id, className, children, label }: { id: string; className?: 
   );
 }
 
-function Chips({ items, onRemove, inherited }: { items: OrgAssignment[]; onRemove: (a: OrgAssignment) => void; inherited?: { a: OrgAssignment; via: string }[] }) {
+type Inherited = { a: OrgAssignment; via: string };
+
+function Chips({
+  items,
+  onRemove,
+  inherited,
+  onRemoveInherited,
+}: {
+  items: OrgAssignment[];
+  onRemove: (a: OrgAssignment) => void;
+  inherited?: Inherited[];
+  /** Inherited chips come from an organization/group assignment: removing one removes it there (confirmed). */
+  onRemoveInherited?: (x: Inherited) => void;
+}) {
   if (!items.length && !inherited?.length) return <span className="muted small">No restrictions</span>;
   return (
     <span className="chips">
@@ -109,6 +122,11 @@ function Chips({ items, onRemove, inherited }: { items: OrgAssignment[]; onRemov
       {inherited?.map(({ a, via }) => (
         <span key={`${a.id}-inh`} className={`r-chip r-chip-inherited ${KIND_INFO[a.policy.kind].css}`} title={`Applies via ${via}`}>
           {a.policy.name} <span className="muted">· {via}</span>
+          {onRemoveInherited && (
+            <button type="button" aria-label={`Remove ${a.policy.name} from ${via}`} title={`Remove from ${via}`} disabled={a.id.startsWith(TEMP)} onClick={() => onRemoveInherited({ a, via })}>
+              ×
+            </button>
+          )}
         </span>
       ))}
     </span>
@@ -234,6 +252,7 @@ function AccessBoard({ orgId }: { orgId: string }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [dragging, setDragging] = useState<Policy | null>(null);
   const [assigning, setAssigning] = useState<Policy | null>(null);
+  const [removingInherited, setRemovingInherited] = useState<Inherited | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const previewQ = useQuery({ queryKey: ['device', preview], queryFn: () => get<DeviceDetail>(`/devices/${preview}`), enabled: !!preview });
 
@@ -270,7 +289,7 @@ function AccessBoard({ orgId }: { orgId: string }) {
       toast(`${policy.name} is already assigned there`, 'info');
       return;
     }
-    const base = { policy_id: policy.id, organization_id: orgId, priority: 0, created_by_id: null, created_at: new Date().toISOString(), policy: { id: policy.id, code: policy.code, name: policy.name, kind: policy.kind, is_active: policy.is_active } };
+    const base = { policy_id: policy.id, organization_id: orgId, priority: 0, synced: false, created_by_id: null, created_at: new Date().toISOString(), policy: { id: policy.id, code: policy.code, name: policy.name, kind: policy.kind, is_active: policy.is_active } };
     const temps: OrgAssignment[] = [
       ...(org ? [{ ...base, id: `${TEMP}${++tempSeq}`, scope: 'ORGANIZATION' as const, target_group_id: null, target_device_id: null, target_name: null }] : []),
       ...groupIds.map((g) => ({ ...base, id: `${TEMP}${++tempSeq}`, scope: 'GROUP' as const, target_group_id: g, target_device_id: null, target_name: groupName.get(g) ?? null })),
@@ -455,7 +474,7 @@ function AccessBoard({ orgId }: { orgId: string }) {
                           </span>
                         ))}
                       </div>
-                      <Chips items={deviceItems(d.id)} onRemove={unassign} inherited={inheritedFor(d)} />
+                      <Chips items={deviceItems(d.id)} onRemove={unassign} inherited={inheritedFor(d)} onRemoveInherited={setRemovingInherited} />
                     </div>
                     <Button size="sm" variant="ghost" aria-pressed={preview === d.id} onClick={() => setPreview(preview === d.id ? null : d.id)}>
                       {preview === d.id ? 'Hide rules' : 'Rules'}
@@ -490,6 +509,35 @@ function AccessBoard({ orgId }: { orgId: string }) {
       </div>
       <DragOverlay dropAnimation={null}>{dragging ? <CardOverlay policy={dragging} count={count(dragging.id)} /> : null}</DragOverlay>
       <AssignDialog policy={assigning} groups={groupList} computers={computers} selected={selected} onClose={() => setAssigning(null)} onAssign={(p, t) => void assign(p, t)} />
+      <ConfirmDialog
+        open={!!removingInherited}
+        title={removingInherited ? `Remove ${removingInherited.a.policy.name}?` : ''}
+        confirmLabel={removingInherited?.a.scope === 'ORGANIZATION' ? 'Remove from organization' : 'Remove from group'}
+        destructive
+        onClose={() => setRemovingInherited(null)}
+        onConfirm={() => {
+          if (removingInherited) void unassign(removingInherited.a);
+          setRemovingInherited(null);
+        }}
+      >
+        {removingInherited && (
+          <p>
+            <strong>{removingInherited.a.policy.name}</strong> is assigned to{' '}
+            {removingInherited.a.scope === 'ORGANIZATION' ? (
+              <>
+                the <strong>whole organization</strong>. Removing it takes it off{' '}
+                <strong>all {plural(devices.data?.total ?? computers.length, 'computer')}</strong>, not only this one.
+              </>
+            ) : (
+              <>
+                the group <strong>{removingInherited.via}</strong>. Removing it takes it off{' '}
+                <strong>{plural(groupList.find((g) => g.id === removingInherited.a.target_group_id)?.member_count ?? 0, 'computer')}</strong> in that group.
+              </>
+            )}{' '}
+            To restrict only some computers, assign it to those groups or computers instead.
+          </p>
+        )}
+      </ConfirmDialog>
     </DndContext>
   );
 }

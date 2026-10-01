@@ -146,3 +146,45 @@ export async function resolveOrgEffectivePolicy(db: PrismaClient, organizationId
   }
   throw new Error('Could not resolve the organization effective policy (concurrent updates)');
 }
+
+// ---------------- sync status (PolicyAssignment.synced) ----------------
+
+/**
+ * A device fetched its merged policy (200, or 304 = it already has it): mark the assignments that
+ * reach it (organization-wide, via its groups, or direct) for the delivered restrictions as synced.
+ */
+export async function markDeviceAssignmentsSynced(db: Client, device: { id: string; organizationId: string }, policyIds: string[]): Promise<void> {
+  if (!policyIds.length) return;
+  const memberships = await db.deviceGroupMember.findMany({
+    where: { deviceId: device.id, group: { organizationId: device.organizationId } },
+    select: { groupId: true },
+  });
+  const groupIds = memberships.map((m) => m.groupId);
+  await db.policyAssignment.updateMany({
+    where: {
+      organizationId: device.organizationId,
+      policyId: { in: policyIds },
+      synced: false,
+      OR: [
+        { scope: 'ORGANIZATION' },
+        ...(groupIds.length ? [{ scope: 'GROUP' as const, targetGroupId: { in: groupIds } }] : []),
+        { scope: 'DEVICE', targetDeviceId: device.id },
+      ],
+    },
+    data: { synced: true },
+  });
+}
+
+/** An org-token service fetched the organization-wide policy: mark those ORGANIZATION assignments synced. */
+export async function markOrgAssignmentsSynced(db: Client, organizationId: string, policyIds: string[]): Promise<void> {
+  if (!policyIds.length) return;
+  await db.policyAssignment.updateMany({
+    where: { organizationId, scope: 'ORGANIZATION', policyId: { in: policyIds }, synced: false },
+    data: { synced: true },
+  });
+}
+
+/** What agents must receive for this restriction changed (publish, rollback, (de)activate): not synced yet. */
+export async function markPolicyUnsynced(db: Client, policyId: string): Promise<void> {
+  await db.policyAssignment.updateMany({ where: { policyId, synced: true }, data: { synced: false } });
+}

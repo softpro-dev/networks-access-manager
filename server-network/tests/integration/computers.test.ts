@@ -190,6 +190,18 @@ describeDb('computers, login links, organization delete, analytics', () => {
     const etag = doc.headers.etag as string;
     expect((await svc({ authorization: `Bearer ${token}`, 'if-none-match': etag })).statusCode).toBe(304);
 
+    // Fetching marks the delivered organization-wide assignments synced; a new version resets them.
+    const orgAssignments = () => h.prisma.policyAssignment.findMany({ where: { organizationId: orgA, scope: 'ORGANIZATION' } });
+    expect((await orgAssignments()).every((x) => x.synced)).toBe(true);
+    const listed = (await a('GET', `/api/assignments?organization_id=${orgA}`)).json().items as { scope: string; synced: boolean }[];
+    expect(listed.filter((x) => x.scope === 'ORGANIZATION').every((x) => x.synced)).toBe(true);
+    const rst1 = await h.prisma.policy.findFirstOrThrow({ where: { organizationId: orgA, code: 'RST-001' } });
+    await a('POST', `/api/policies/${rst1.id}/deactivate`);
+    expect((await h.prisma.policyAssignment.findFirstOrThrow({ where: { policyId: rst1.id } })).synced).toBe(false);
+    await a('POST', `/api/policies/${rst1.id}/activate`);
+    expect((await svc({ authorization: `Bearer ${token}` })).statusCode).toBe(200);
+    expect((await h.prisma.policyAssignment.findFirstOrThrow({ where: { policyId: rst1.id } })).synced).toBe(true);
+
     // No org-scoped policy → 404 (org B has none).
     const tokenB = (await as(adminB)('POST', `/api/organizations/${orgB}/access-token`)).json().access_token;
     expect((await svc({ authorization: `Bearer ${tokenB}` })).statusCode).toBe(404);
