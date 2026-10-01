@@ -4,7 +4,7 @@ import type { AppContext } from '../../types.js';
 import type { AdminPrincipal } from '../../domain/rbac.js';
 import { assertOrgAccess, isSuperAdmin, requireSuperAdmin } from '../../domain/rbac.js';
 import { AuditAction, writeAudit } from '../../services/audit.js';
-import { randomSecret, sha256Hex } from '../../utils/crypto.js';
+import { openSecret, randomSecret, sealSecret, sha256Hex } from '../../utils/crypto.js';
 import { generateAccessToken } from '../../domain/deviceToken.js';
 import { hashPassword, MIN_PASSWORD_LENGTH } from '../../services/password.js';
 import { badRequest, conflict, forbidden, notFound } from '../../utils/errors.js';
@@ -19,6 +19,8 @@ export function serializeOrg(o: Organization) {
     phone: o.phone,
     has_registration_token: o.registrationTokenHash !== null,
     has_access_token: o.accessTokenHash !== null,
+    /** false for tokens generated before they were stored encrypted (rotate once). */
+    access_token_copyable: o.accessTokenHash !== null && o.accessTokenEnc !== null,
     created_at: iso(o.createdAt),
     updated_at: iso(o.updatedAt),
   };
@@ -143,16 +145,33 @@ export async function rotateRegistrationToken(ctx: AppContext, p: AdminPrincipal
 export async function rotateAccessToken(ctx: AppContext, p: AdminPrincipal, id: string, ip: string) {
   await loadOrg(ctx, p, id);
   const { token, tokenHash } = generateAccessToken();
-  const org = await ctx.prisma.organization.update({ where: { id }, data: { accessTokenHash: tokenHash } });
+  // The hash authenticates services; the sealed copy lets admins copy the token again later.
+  const org = await ctx.prisma.organization.update({
+    where: { id },
+    data: { accessTokenHash: tokenHash, accessTokenEnc: sealSecret(token, ctx.config.tokenEncryptionKey) },
+  });
   await writeAudit(ctx.prisma, { organizationId: id, actorType: 'USER', actorId: p.userId, action: AuditAction.ACCESS_TOKEN_SET, targetType: 'Organization', targetId: id, ip });
   return { organization: serializeOrg(org), access_token: token };
 }
 
 export async function clearAccessToken(ctx: AppContext, p: AdminPrincipal, id: string, ip: string) {
   await loadOrg(ctx, p, id);
-  const org = await ctx.prisma.organization.update({ where: { id }, data: { accessTokenHash: null } });
+  const org = await ctx.prisma.organization.update({ where: { id }, data: { accessTokenHash: null, accessTokenEnc: null } });
   await writeAudit(ctx.prisma, { organizationId: id, actorType: 'USER', actorId: p.userId, action: AuditAction.ACCESS_TOKEN_CLEARED, targetType: 'Organization', targetId: id, ip });
   return serializeOrg(org);
+}
+
+/** The current access token in clear ("Copy token"). Same permission as rotating it; audited. */
+export async function revealAccessToken(ctx: AppContext, p: AdminPrincipal, id: string, ip: string) {
+  const org = await loadOrg(ctx, p, id);
+  if (!org.accessTokenHash) throw notFound('This organization has no access token. Generate one first.');
+  const token = org.accessTokenEnc ? openSecret(org.accessTokenEnc, ctx.config.tokenEncryptionKey) : null;
+  if (!token) {
+    // Generated before tokens were stored encrypted, or TOKEN_ENCRYPTION_KEY / JWT_SECRET changed.
+    throw conflict('ACCESS_TOKEN_NOT_RETRIEVABLE', 'This token cannot be copied (it was generated before copying was supported or the server key changed). Rotate it once to enable Copy token.');
+  }
+  await writeAudit(ctx.prisma, { organizationId: id, actorType: 'USER', actorId: p.userId, action: AuditAction.ACCESS_TOKEN_REVEALED, targetType: 'Organization', targetId: id, ip });
+  return { access_token: token };
 }
 
 export async function clearRegistrationToken(ctx: AppContext, p: AdminPrincipal, id: string, ip: string) {

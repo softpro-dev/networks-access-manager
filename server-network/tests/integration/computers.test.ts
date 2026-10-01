@@ -200,8 +200,23 @@ describeDb('computers, login links, organization delete, analytics', () => {
     expect((await svc({ authorization: `Bearer ${token}` })).statusCode).toBe(401);
     expect((await svc({ authorization: `Bearer ${rotated}` })).statusCode).toBe(200);
 
+    // Copy token: returns the current token (stored encrypted, never in clear), audited, not cached.
+    const copied = await a('GET', `/api/organizations/${orgA}/access-token`);
+    expect(copied.statusCode, copied.body).toBe(200);
+    expect(copied.json().access_token).toBe(rotated);
+    expect(copied.headers['cache-control']).toBe('no-store');
+    const row = await h.prisma.organization.findUniqueOrThrow({ where: { id: orgA } });
+    expect(row.accessTokenEnc).toBeTruthy();
+    expect(row.accessTokenEnc).not.toContain(rotated);
+    expect((await as(adminB)('GET', `/api/organizations/${orgA}/access-token`)).statusCode).toBe(404); // other tenant
+    expect((await h.prisma.auditLog.findMany({ where: { action: 'ACCESS_TOKEN_REVEALED' } })).length).toBe(1);
+    // A token without a stored copy (generated before this existed) cannot be copied.
+    await h.prisma.organization.update({ where: { id: orgA }, data: { accessTokenEnc: null } });
+    expect((await a('GET', `/api/organizations/${orgA}/access-token`)).json().error.code).toBe('ACCESS_TOKEN_NOT_RETRIEVABLE');
+
     // Clearing disables token access entirely.
     await a('DELETE', `/api/organizations/${orgA}/access-token`);
     expect((await svc({ authorization: `Bearer ${rotated}` })).statusCode).toBe(401);
+    expect((await a('GET', `/api/organizations/${orgA}/access-token`)).statusCode).toBe(404);
   });
 });

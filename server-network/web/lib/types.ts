@@ -62,6 +62,8 @@ export interface Organization {
   phone: string | null;
   has_registration_token: boolean;
   has_access_token: boolean;
+  /** false for tokens generated before they were stored encrypted (rotate once to enable Copy token). */
+  access_token_copyable: boolean;
   created_at: string;
   updated_at: string;
   stats?: { devices: number; pending_devices: number; policies: number };

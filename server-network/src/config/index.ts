@@ -44,6 +44,8 @@ const envSchema = z
     /** Unset = allowed outside production. The console also hides the button unless ?dev=true. */
     ALLOW_ORGANIZATION_DELETE: boolish.optional(),
     LOGIN_LINK_TTL_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
+    /** Key material for encrypting stored organization access tokens ("Copy token"). Unset = derived from JWT_SECRET. */
+    TOKEN_ENCRYPTION_KEY: z.string().min(32, 'TOKEN_ENCRYPTION_KEY must be at least 32 characters').optional(),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === 'production') {
@@ -84,6 +86,8 @@ export interface AppConfig {
   webPublicUrl: string;
   allowOrganizationDelete: boolean;
   loginLinkTtlMinutes: number;
+  /** Key material for sealSecret/openSecret (TOKEN_ENCRYPTION_KEY, else JWT_SECRET). */
+  tokenEncryptionKey: string;
 }
 
 function parseTrustProxy(raw: string): TrustProxy {
@@ -125,5 +129,6 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     webPublicUrl: e.WEB_PUBLIC_URL,
     allowOrganizationDelete: e.ALLOW_ORGANIZATION_DELETE ?? e.NODE_ENV !== 'production',
     loginLinkTtlMinutes: e.LOGIN_LINK_TTL_MINUTES,
+    tokenEncryptionKey: e.TOKEN_ENCRYPTION_KEY ?? e.JWT_SECRET,
   };
 }

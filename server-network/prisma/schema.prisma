@@ -78,6 +78,9 @@ model Organization {
   registrationTokenHash String?            @db.Char(64)
   /// sha256 hex of the per-organization service access token (non-expiring; rotate to revoke)
   accessTokenHash       String?            @unique @db.Char(64)
+  /// the same token encrypted (AES-256-GCM, utils/crypto sealSecret) so admins can copy it again;
+  /// null for tokens generated before this existed (rotate once to enable "Copy token")
+  accessTokenEnc        String?            @db.VarChar(255)
   createdAt             DateTime           @default(now())
   updatedAt             DateTime           @updatedAt
 

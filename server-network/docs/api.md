@@ -74,6 +74,9 @@ Rate limited per IP.
 | `PATCH /api/organizations/:id` (super) | `{"name"?, "status"?: "ACTIVE"\|"DISABLED", "phone"?: "01712345678"}` (phone: exactly 11 digits) |
 | `POST /api/organizations/:id/registration-token` | → `{"organization":{...},"registration_token":"nrt_..."}` raw token **once** |
 | `DELETE /api/organizations/:id/registration-token` | fall back to global `AGENT_REGISTRATION_TOKEN` |
+| `POST /api/organizations/:id/access-token` | generate/rotate the service access token → `{"organization":{...},"access_token":"nat_..."}` |
+| `GET /api/organizations/:id/access-token` | "Copy token": the current token `{"access_token":"nat_..."}` (`Cache-Control: no-store`, audited `ACCESS_TOKEN_REVEALED`). Stored AES-256-GCM-encrypted with `TOKEN_ENCRYPTION_KEY` (default: derived from `JWT_SECRET`). 404 no token; 409 `ACCESS_TOKEN_NOT_RETRIEVABLE` when the token predates encrypted storage or the key changed (rotate once) |
+| `DELETE /api/organizations/:id/access-token` | clear the token (services lose access) |
 | `POST /api/organizations/:id/login-link` (super) | `{"user_id"?}` → `{url, expires_at, user:{id,email}}`; one-time sign-in link (`WEB_PUBLIC_URL/login?org_admin=…`) for the given or oldest active organization admin. 409 `ORGANIZATION_DISABLED`, 404 when there is no active admin |
 | `DELETE /api/organizations/:id?confirm=<CODE>` (super) | development tool: deletes the organization and all its data (audit kept) → `{devices, policies, users}`. 403 `ORGANIZATION_DELETE_DISABLED` unless `ALLOW_ORGANIZATION_DELETE` (default: on outside production); 400 when `confirm` ≠ code |
 

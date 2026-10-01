@@ -231,6 +231,32 @@ export function RegistrationTokenControls({ org }: { org: Organization }) {
  * shows the raw token once in a dialog with a Copy button; only its hash is stored, so a lost token
  * must be rotated. Non-expiring; rotate or clear to revoke.
  */
+/** Copies the organization's current access token (GET /organizations/:id/access-token, audited). */
+function CopyAccessTokenButton({ org }: { org: Organization }) {
+  const toast = useToast();
+  const m = useAction(() => api<{ access_token: string }>(`/organizations/${org.id}/access-token`), { invalidate: [['audit']], toastErrors: true });
+  const onClick = () => {
+    const req = m.mutateAsync(undefined);
+    copyPending(req.then((r) => r.access_token))
+      .then(() => toast(`Access token for ${org.code} copied — paste it into os-apps/.env (ACCESS_TOKE)`, 'success'))
+      .catch(async () => {
+        // Request errors are already toasted by useAction; only report clipboard failures here.
+        if (await req.then(() => true, () => false)) toast('Could not copy: the browser blocked clipboard access. Try again.', 'error');
+      });
+  };
+  return (
+    <Button
+      size="sm"
+      busy={m.isPending}
+      disabled={!org.access_token_copyable}
+      title={org.access_token_copyable ? `Copy the current access token of ${org.code}` : 'This token was generated before copying was supported. Rotate it once to enable Copy token.'}
+      onClick={onClick}
+    >
+      Copy Token
+    </Button>
+  );
+}
+
 export function AccessTokenControls({ org, short = false }: { org: Organization; short?: boolean }) {
   const [confirm, setConfirm] = useState<'rotate' | 'clear' | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -261,6 +287,7 @@ export function AccessTokenControls({ org, short = false }: { org: Organization;
         >
           {org.has_access_token ? (short ? 'Rotate token' : 'Rotate access token') : short ? 'Generate token' : 'Generate access token'}
         </Button>
+        {org.has_access_token && <CopyAccessTokenButton org={org} />}
         {org.has_access_token && (
           <Button
             size="sm"

@@ -1,4 +1,36 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto';
+
+const SEAL_PREFIX = 'v1';
+
+function sealKey(keyMaterial: string): Buffer {
+  return Buffer.from(hkdfSync('sha256', keyMaterial, 'nam-secret-seal', 'nam-secret-seal:aes-256-gcm:v1', 32));
+}
+
+/**
+ * Encrypt a secret for storage (AES-256-GCM, key derived with HKDF from `keyMaterial`).
+ * Format: `v1.<iv>.<tag>.<ciphertext>` (base64url). Used for values that must be shown again
+ * later (organization access tokens); lookups still use the separate sha256 hash.
+ */
+export function sealSecret(plaintext: string, keyMaterial: string): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', sealKey(keyMaterial), iv);
+  const ct = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  return [SEAL_PREFIX, iv, cipher.getAuthTag(), ct].map((p) => (typeof p === 'string' ? p : p.toString('base64url'))).join('.');
+}
+
+/** Decrypt a `sealSecret` value; null when malformed, tampered with, or sealed under another key. */
+export function openSecret(sealed: string, keyMaterial: string): string | null {
+  const parts = sealed.split('.');
+  if (parts.length !== 4 || parts[0] !== SEAL_PREFIX) return null;
+  try {
+    const [iv, tag, ct] = parts.slice(1).map((p) => Buffer.from(p, 'base64url'));
+    const decipher = createDecipheriv('aes-256-gcm', sealKey(keyMaterial), iv!);
+    decipher.setAuthTag(tag!);
+    return Buffer.concat([decipher.update(ct!), decipher.final()]).toString('utf8');
+  } catch {
+    return null;
+  }
+}
 
 export function sha256Hex(input: string | Buffer): string {
   return createHash('sha256').update(input).digest('hex');
