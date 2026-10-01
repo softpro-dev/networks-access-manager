@@ -1,24 +1,22 @@
 'use client';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
 import { Suspense, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { useOrganizations } from '@/lib/queries';
-import { absTime } from '@/lib/format';
 import type { Organization } from '@/lib/types';
-import { Alert, Badge, Button, Empty, ErrorBox, PageHeader, Spinner, StatusBadge } from '@/components/ui';
-import { DeleteOrgDialog, LoginLinkButton, OrgFormDialog, OrgStatusDialog, RegistrationTokenControls, AccessTokenControls } from '@/components/OrgDialogs';
+import { Alert, Button, Empty, ErrorBox, PageHeader, Spinner, StatusBadge } from '@/components/ui';
+import { DeleteOrgDialog, LoginLinkButton, OrgFormDialog, OrgPasswordDialog, OrgStatusDialog, AccessTokenControls } from '@/components/OrgDialogs';
 
 function OrganizationsInner() {
   const { isSuper, user, features } = useAuth();
-  const params = useSearchParams();
   const orgs = useOrganizations();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<Organization | null>(null);
   const [toggling, setToggling] = useState<Organization | null>(null);
+  const [passwordOrg, setPasswordOrg] = useState<Organization | null>(null);
   const [deleting, setDeleting] = useState<Organization | null>(null);
-  // Deleting is a development tool: only with ?dev=true AND when the server allows it (ALLOW_ORGANIZATION_DELETE).
-  const canDelete = params.get('dev') === 'true' && features?.organization_delete === true;
+  // Only when the server allows it (ALLOW_ORGANIZATION_DELETE; on by default outside production).
+  const canDelete = features?.organization_delete === true;
 
   if (!isSuper) {
     return (
@@ -44,8 +42,7 @@ function OrganizationsInner() {
                 <th>Code</th>
                 <th>Name</th>
                 <th>Status</th>
-                <th>Registration token</th>
-                <th>Created</th>
+                <th>Access token</th>
                 <th>
                   <span className="sr-only">Actions</span>
                 </th>
@@ -65,17 +62,17 @@ function OrganizationsInner() {
                   </td>
                   <td>
                     <div className="cell-inline">
-                      {o.has_registration_token ? <Badge tone="green">set</Badge> : <Badge tone="gray">global / none</Badge>}
-                      <RegistrationTokenControls org={o} />
-                      <AccessTokenControls org={o} />
+                      <AccessTokenControls org={o} short />
                     </div>
                   </td>
-                  <td>{absTime(o.created_at)}</td>
                   <td className="cell-actions">
                     <div className="btn-row">
                       <LoginLinkButton org={o} />
                       <Button size="sm" onClick={() => setEditing(o)}>
                         Edit
+                      </Button>
+                      <Button size="sm" onClick={() => setPasswordOrg(o)}>
+                        Update password
                       </Button>
                       <Button size="sm" variant={o.status === 'ACTIVE' ? 'danger' : 'secondary'} onClick={() => setToggling(o)}>
                         {o.status === 'ACTIVE' ? 'Disable' : 'Enable'}
@@ -96,6 +93,7 @@ function OrganizationsInner() {
       <OrgFormDialog open={creating} onClose={() => setCreating(false)} />
       <OrgFormDialog open={!!editing} org={editing} onClose={() => setEditing(null)} />
       <OrgStatusDialog org={toggling} onClose={() => setToggling(null)} />
+      <OrgPasswordDialog org={passwordOrg} onClose={() => setPasswordOrg(null)} />
       {canDelete && <DeleteOrgDialog org={deleting} onClose={() => setDeleting(null)} />}
     </>
   );

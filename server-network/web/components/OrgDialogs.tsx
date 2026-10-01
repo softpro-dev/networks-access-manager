@@ -1,30 +1,60 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, del, patch, post } from '@/lib/api';
 import { useAction } from '@/lib/queries';
-import type { LoginLink, Organization } from '@/lib/types';
+import type { LoginLink, Organization, Page, User } from '@/lib/types';
 import { useToast } from './toast';
 import { Alert, Button, ConfirmDialog, CopyButton, ErrorBox, Field, Modal, Mono } from './ui';
+
+const MIN_PASSWORD = 12;
+const PHONE_RE = /^\d{11}$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** POST /organizations also returns the administrator it created; PATCH does not. */
+type SavedOrg = Organization & { admin?: { id: string; email: string } };
 
 export function OrgFormDialog({ open, org, onClose }: { open: boolean; org?: Organization | null; onClose: () => void }) {
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   useEffect(() => {
     if (open) {
       setCode(org?.code ?? '');
       setName(org?.name ?? '');
+      setPhone(org?.phone ?? '');
+      setEmail('');
+      setPassword('');
     }
   }, [open, org]);
   const save = useAction(
-    () => (org ? patch<Organization>(`/organizations/${org.id}`, { name: name.trim() }) : post<Organization>('/organizations', { code: code.trim().toUpperCase(), name: name.trim() })),
-    { success: org ? 'Organization updated' : 'Organization created', invalidate: [['organizations'], ['organization']], onSuccess: onClose },
+    () =>
+      org
+        ? patch<SavedOrg>(`/organizations/${org.id}`, { name: name.trim(), ...(phone ? { phone } : {}) })
+        : post<SavedOrg>('/organizations', {
+            code: code.trim().toUpperCase(),
+            name: name.trim(),
+            phone,
+            admin_email: email.trim().toLowerCase(),
+            admin_password: password,
+          }),
+    {
+      success: (r) => (r.admin ? `Organization created — administrator ${r.admin.email} can sign in` : 'Organization updated'),
+      invalidate: [['organizations'], ['organization'], ['users']],
+      onSuccess: onClose,
+    },
   );
   useEffect(() => {
     if (open) save.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
   const codeOk = /^[A-Z0-9][A-Z0-9-]{1,31}$/.test(code.trim().toUpperCase());
+  const phoneOk = PHONE_RE.test(phone);
+  const emailOk = EMAIL_RE.test(email.trim());
+  // Existing organizations may predate the phone field: allow saving them with it still empty.
+  const valid = !!name.trim() && (org ? !phone || phoneOk : codeOk && phoneOk && emailOk && password.length >= MIN_PASSWORD);
   return (
     <Modal
       open={open}
@@ -33,7 +63,7 @@ export function OrgFormDialog({ open, org, onClose }: { open: boolean; org?: Org
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" busy={save.isPending} disabled={!name.trim() || (!org && !codeOk)} onClick={() => save.mutate(undefined)}>
+          <Button variant="primary" busy={save.isPending} disabled={!valid} onClick={() => save.mutate(undefined)}>
             {org ? 'Save' : 'Create'}
           </Button>
         </>
@@ -43,7 +73,7 @@ export function OrgFormDialog({ open, org, onClose }: { open: boolean; org?: Org
         className="stack"
         onSubmit={(e) => {
           e.preventDefault();
-          save.mutate(undefined);
+          if (valid) save.mutate(undefined);
         }}
       >
         <Field label="Code" hint={org ? 'The code is permanent: agents are configured with it.' : 'Uppercase letters, digits and "-", 2–32 characters (e.g. INST-001). Agents are configured with this code.'}>
@@ -52,6 +82,26 @@ export function OrgFormDialog({ open, org, onClose }: { open: boolean; org?: Org
         <Field label="Name">
           <input value={name} onChange={(e) => setName(e.target.value)} maxLength={200} autoFocus={!!org} />
         </Field>
+        <Field label="Phone number" hint="Exactly 11 digits (e.g. 01712345678)." error={phone && !phoneOk ? `${phone.length}/11 digits` : null}>
+          <input
+            type="tel"
+            inputMode="numeric"
+            autoComplete="tel"
+            placeholder="01712345678"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 11))}
+            maxLength={11}
+            required={!org}
+          />
+        </Field>
+        {!org && (
+          <>
+            <Field label="Administrator email" hint="Sign-in email of this organization's first administrator." error={email && !emailOk ? 'Enter a valid email' : null}>
+              <input type="email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} maxLength={254} required />
+            </Field>
+            <NewPasswordField label="Administrator password" value={password} onChange={setPassword} />
+          </>
+        )}
         <ErrorBox error={save.error} />
       </form>
     </Modal>
@@ -181,7 +231,7 @@ export function RegistrationTokenControls({ org }: { org: Organization }) {
  * shows the raw token once in a dialog with a Copy button; only its hash is stored, so a lost token
  * must be rotated. Non-expiring; rotate or clear to revoke.
  */
-export function AccessTokenControls({ org }: { org: Organization }) {
+export function AccessTokenControls({ org, short = false }: { org: Organization; short?: boolean }) {
   const [confirm, setConfirm] = useState<'rotate' | 'clear' | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const gen = useAction(() => post<{ access_token: string }>(`/organizations/${org.id}/access-token`), {
@@ -201,6 +251,7 @@ export function AccessTokenControls({ org }: { org: Organization }) {
       <div className="btn-row">
         <Button
           size="sm"
+          variant={org.has_access_token ? 'warning' : 'secondary'}
           busy={gen.isPending}
           onClick={() => {
             if (!org.has_access_token) return gen.mutate(undefined);
@@ -208,7 +259,7 @@ export function AccessTokenControls({ org }: { org: Organization }) {
             setConfirm('rotate');
           }}
         >
-          {org.has_access_token ? 'Rotate access token' : 'Generate access token'}
+          {org.has_access_token ? (short ? 'Rotate token' : 'Rotate access token') : short ? 'Generate token' : 'Generate access token'}
         </Button>
         {org.has_access_token && (
           <Button
@@ -309,6 +360,171 @@ export function LoginLinkButton({ org }: { org: Organization }) {
     <Button size="sm" busy={m.isPending} disabled={org.status !== 'ACTIVE'} title={org.status !== 'ACTIVE' ? 'Organization is disabled' : `Copy a one-time sign-in link for an administrator of ${org.code}`} onClick={onClick}>
       Copy login link
     </Button>
+  );
+}
+
+// Look-alike characters (I l 1 O 0) are left out so a generated password can be read out or retyped.
+const PASSWORD_SETS = ['ABCDEFGHJKLMNPQRSTUVWXYZ', 'abcdefghijkmnopqrstuvwxyz', '23456789', '!@#$%^&*-_=+?'];
+
+/** Uniform random integer in [0, n) from the Web Crypto CSPRNG (rejection sampling, no modulo bias). */
+function randomIndex(n: number): number {
+  const limit = Math.floor(0x1_0000_0000 / n) * n;
+  const buf = new Uint32Array(1);
+  do crypto.getRandomValues(buf);
+  while (buf[0]! >= limit);
+  return buf[0]! % n;
+}
+
+/** 20 characters (~125 bits), at least one from each character set, shuffled. */
+function generatePassword(length = 20): string {
+  const all = PASSWORD_SETS.join('');
+  const chars = PASSWORD_SETS.map((set) => set[randomIndex(set.length)]!);
+  while (chars.length < length) chars.push(all[randomIndex(all.length)]!);
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = randomIndex(i + 1);
+    [chars[i], chars[j]] = [chars[j]!, chars[i]!];
+  }
+  return chars.join('');
+}
+
+/** Password input with Generate (CSPRNG) / Show / Copy, enforcing the server's minimum length. */
+function NewPasswordField({
+  label,
+  hint,
+  value,
+  onChange,
+  autoFocus,
+}: {
+  label: string;
+  hint?: string;
+  value: string;
+  onChange: (v: string) => void;
+  autoFocus?: boolean;
+}) {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    if (!value) setShow(false);
+  }, [value]);
+  return (
+    <>
+      <Field
+        label={label}
+        hint={`At least ${MIN_PASSWORD} characters.${hint ? ` ${hint}` : ''} Copy a generated password before saving — it is not shown again.`}
+        error={value.length > 0 && value.length < MIN_PASSWORD ? 'Too short' : null}
+      >
+        <input
+          type={show ? 'text' : 'password'}
+          className={show ? 'mono' : undefined}
+          autoComplete="new-password"
+          spellCheck={false}
+          autoFocus={autoFocus}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          maxLength={1024}
+        />
+      </Field>
+      <div className="btn-row">
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() => {
+            onChange(generatePassword());
+            setShow(true);
+          }}
+        >
+          Generate secure password
+        </Button>
+        <Button size="sm" disabled={!value} onClick={() => setShow((s) => !s)}>
+          {show ? 'Hide' : 'Show'}
+        </Button>
+        {value && <CopyButton value={value} />}
+      </div>
+    </>
+  );
+}
+
+/**
+ * Super admin: set a new password for the organization's administrator. Uses PATCH /users/:id, which
+ * also revokes that user's sessions and writes an audit entry (never the password).
+ */
+export function OrgPasswordDialog({ org, onClose }: { org: Organization | null; onClose: () => void }) {
+  const [userId, setUserId] = useState('');
+  const [password, setPassword] = useState('');
+  const admins = useQuery({
+    queryKey: ['users', { organization_id: org?.id, role: 'ORGANIZATION_ADMIN' }],
+    queryFn: () => api<Page<User>>('/users', { query: { organization_id: org!.id, role: 'ORGANIZATION_ADMIN', page_size: 200 } }),
+    enabled: !!org,
+  });
+  const items = admins.data?.items ?? [];
+  const selected = items.find((u) => u.id === userId) ?? items[0];
+  const m = useAction(() => patch<User>(`/users/${selected!.id}`, { password }), {
+    success: (u) => `Password updated for ${u.email}`,
+    invalidate: [['users'], ['audit']],
+    onSuccess: onClose,
+  });
+  useEffect(() => {
+    if (org) {
+      setUserId('');
+      setPassword('');
+      m.reset();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [org]);
+  const canSubmit = !!selected && password.length >= MIN_PASSWORD && !m.isPending;
+  return (
+    <Modal
+      open={!!org}
+      onClose={onClose}
+      title={`Update password — ${org?.code ?? ''}`}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" busy={m.isPending} disabled={!canSubmit} onClick={() => m.mutate(undefined)}>
+            Update password
+          </Button>
+        </>
+      }
+    >
+      <form
+        className="stack"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (canSubmit) m.mutate(undefined);
+        }}
+      >
+        {admins.error && <ErrorBox error={admins.error} />}
+        {admins.isLoading ? (
+          <p>Loading administrators…</p>
+        ) : !selected ? (
+          <Alert tone="info">This organization has no administrator account. Create one on the Users page.</Alert>
+        ) : (
+          <>
+            <Field label="Email">
+              {items.length > 1 ? (
+                <select value={selected.id} onChange={(e) => setUserId(e.target.value)}>
+                  {items.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.email}
+                      {u.status !== 'ACTIVE' ? ' (disabled)' : ''}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input type="email" value={selected.email} readOnly />
+              )}
+            </Field>
+            <NewPasswordField
+              label="New password"
+              hint="Takes effect immediately and signs this administrator out everywhere."
+              value={password}
+              onChange={setPassword}
+              autoFocus
+            />
+          </>
+        )}
+        <ErrorBox error={m.error} />
+      </form>
+    </Modal>
   );
 }
 

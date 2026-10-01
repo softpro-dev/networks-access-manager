@@ -69,9 +69,9 @@ Rate limited per IP.
 | | |
 |---|---|
 | `GET /api/organizations` | super: all; org admin: own only |
-| `POST /api/organizations` (super) | `{"code":"INST-001","name":"Organization A"}` → 201 |
+| `POST /api/organizations` (super) | `{"code":"INST-001","name":"Organization A","phone":"01712345678","admin_email":"admin@inst-001.example.com","admin_password":"≥12 chars"}` → 201 with `admin:{id,email}`. Creates the organization and its first ORGANIZATION_ADMIN in one transaction. `phone` must be exactly 11 digits. 409 `ORGANIZATION_CODE_IN_USE` / `EMAIL_IN_USE` |
 | `GET /api/organizations/:id` | adds `stats {devices, pending_devices, policies}` |
-| `PATCH /api/organizations/:id` (super) | `{"name"?, "status"?: "ACTIVE"\|"DISABLED"}` |
+| `PATCH /api/organizations/:id` (super) | `{"name"?, "status"?: "ACTIVE"\|"DISABLED", "phone"?: "01712345678"}` (phone: exactly 11 digits) |
 | `POST /api/organizations/:id/registration-token` | → `{"organization":{...},"registration_token":"nrt_..."}` raw token **once** |
 | `DELETE /api/organizations/:id/registration-token` | fall back to global `AGENT_REGISTRATION_TOKEN` |
 | `POST /api/organizations/:id/login-link` (super) | `{"user_id"?}` → `{url, expires_at, user:{id,email}}`; one-time sign-in link (`WEB_PUBLIC_URL/login?org_admin=…`) for the given or oldest active organization admin. 409 `ORGANIZATION_DISABLED`, 404 when there is no active admin |

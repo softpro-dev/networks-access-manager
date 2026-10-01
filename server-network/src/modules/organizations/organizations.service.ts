@@ -6,6 +6,7 @@ import { assertOrgAccess, isSuperAdmin, requireSuperAdmin } from '../../domain/r
 import { AuditAction, writeAudit } from '../../services/audit.js';
 import { randomSecret, sha256Hex } from '../../utils/crypto.js';
 import { generateAccessToken } from '../../domain/deviceToken.js';
+import { hashPassword, MIN_PASSWORD_LENGTH } from '../../services/password.js';
 import { badRequest, conflict, forbidden, notFound } from '../../utils/errors.js';
 import { iso, ORG_CODE_RE } from '../../utils/http.js';
 
@@ -15,6 +16,7 @@ export function serializeOrg(o: Organization) {
     code: o.code,
     name: o.name,
     status: o.status,
+    phone: o.phone,
     has_registration_token: o.registrationTokenHash !== null,
     has_access_token: o.accessTokenHash !== null,
     created_at: iso(o.createdAt),
@@ -22,10 +24,16 @@ export function serializeOrg(o: Organization) {
   };
 }
 
+const phone = z.string().trim().regex(/^\d{11}$/, 'Must be exactly 11 digits');
+
+/** Creating an organization also creates its first ORGANIZATION_ADMIN (admin_email / admin_password). */
 export const createOrgBody = z
   .object({
     code: z.string().trim().toUpperCase().regex(ORG_CODE_RE, 'Must match ^[A-Z0-9][A-Z0-9-]{1,31}$'),
     name: z.string().trim().min(1).max(200),
+    phone,
+    admin_email: z.string().trim().toLowerCase().email().max(254),
+    admin_password: z.string().min(MIN_PASSWORD_LENGTH, `Password must be at least ${MIN_PASSWORD_LENGTH} characters`).max(1024),
   })
   .strict();
 
@@ -33,6 +41,7 @@ export const updateOrgBody = z
   .object({
     name: z.string().trim().min(1).max(200).optional(),
     status: z.enum(['ACTIVE', 'DISABLED']).optional(),
+    phone: phone.optional(),
   })
   .strict();
 
@@ -62,18 +71,38 @@ export async function createOrg(ctx: AppContext, p: AdminPrincipal, body: z.infe
   if (await ctx.prisma.organization.findUnique({ where: { code: body.code } })) {
     throw conflict('ORGANIZATION_CODE_IN_USE', 'Organization code already exists');
   }
-  const org = await ctx.prisma.organization.create({ data: { code: body.code, name: body.name } });
-  await writeAudit(ctx.prisma, {
-    organizationId: org.id,
-    actorType: 'USER',
-    actorId: p.userId,
-    action: AuditAction.ORGANIZATION_CREATED,
-    targetType: 'Organization',
-    targetId: org.id,
-    metadata: { code: org.code, name: org.name },
-    ip,
+  if (await ctx.prisma.user.findUnique({ where: { email: body.admin_email } })) {
+    throw conflict('EMAIL_IN_USE', 'A user with this email already exists');
+  }
+  const passwordHash = await hashPassword(body.admin_password);
+  const { org, admin } = await ctx.prisma.$transaction(async (tx) => {
+    const org = await tx.organization.create({ data: { code: body.code, name: body.name, phone: body.phone } });
+    const admin = await tx.user.create({
+      data: { email: body.admin_email, passwordHash, role: 'ORGANIZATION_ADMIN', organizationId: org.id, name: 'Organization Admin' },
+    });
+    await writeAudit(tx, {
+      organizationId: org.id,
+      actorType: 'USER',
+      actorId: p.userId,
+      action: AuditAction.ORGANIZATION_CREATED,
+      targetType: 'Organization',
+      targetId: org.id,
+      metadata: { code: org.code, name: org.name, phone: org.phone },
+      ip,
+    });
+    await writeAudit(tx, {
+      organizationId: org.id,
+      actorType: 'USER',
+      actorId: p.userId,
+      action: AuditAction.ADMIN_CREATED,
+      targetType: 'User',
+      targetId: admin.id,
+      metadata: { email: admin.email, role: admin.role },
+      ip,
+    });
+    return { org, admin };
   });
-  return serializeOrg(org);
+  return { ...serializeOrg(org), admin: { id: admin.id, email: admin.email } };
 }
 
 export async function updateOrg(ctx: AppContext, p: AdminPrincipal, id: string, body: z.infer<typeof updateOrgBody>, ip: string) {

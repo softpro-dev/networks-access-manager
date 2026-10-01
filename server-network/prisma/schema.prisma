@@ -72,6 +72,8 @@ model Organization {
   code                  String             @unique @db.VarChar(32)
   name                  String             @db.VarChar(200)
   status                OrganizationStatus @default(ACTIVE)
+  /// contact phone number, exactly 11 digits (null for organizations created before it was required)
+  phone                 String?            @db.VarChar(11)
   /// sha256 hex of the per-organization registration token (null = use global AGENT_REGISTRATION_TOKEN)
   registrationTokenHash String?            @db.Char(64)
   /// sha256 hex of the per-organization service access token (non-expiring; rotate to revoke)

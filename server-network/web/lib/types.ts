@@ -59,6 +59,7 @@ export interface Organization {
   code: string;
   name: string;
   status: ActiveStatus;
+  phone: string | null;
   has_registration_token: boolean;
   has_access_token: boolean;
   created_at: string;

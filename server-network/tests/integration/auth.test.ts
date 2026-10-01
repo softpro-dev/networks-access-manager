@@ -69,9 +69,18 @@ describeDb('admin authentication & authorization', () => {
 
   it('SUPER_ADMIN creates organizations and admins (audited)', async () => {
     const t = await login(h.app, 'super@example.com');
-    const o = await h.app.inject({ method: 'POST', url: '/api/organizations', headers: bearer(t), payload: { code: 'company-002', name: 'B' } });
+    const o = await h.app.inject({ method: 'POST', url: '/api/organizations', headers: bearer(t), payload: { code: 'company-002', name: 'B', phone: '01712345678', admin_email: 'b-admin@example.com', admin_password: 'long-enough-pass' } });
     expect(o.statusCode).toBe(201);
     expect(o.json().code).toBe('COMPANY-002');
+    expect(o.json().phone).toBe('01712345678');
+    expect(o.json().admin.email).toBe('b-admin@example.com');
+    expect(o.body).not.toContain('long-enough-pass');
+    expect(await login(h.app, 'b-admin@example.com', 'long-enough-pass')).toBeTruthy();
+    const badPhone = await h.app.inject({ method: 'POST', url: '/api/organizations', headers: bearer(t), payload: { code: 'X-1', name: 'X', phone: '0171234567', admin_email: 'x@example.com', admin_password: 'long-enough-pass' } });
+    expect(badPhone.statusCode).toBe(400);
+    const dupEmail = await h.app.inject({ method: 'POST', url: '/api/organizations', headers: bearer(t), payload: { code: 'X-2', name: 'X', phone: '01712345678', admin_email: 'b-admin@example.com', admin_password: 'long-enough-pass' } });
+    expect(dupEmail.statusCode).toBe(409);
+    expect(await h.prisma.organization.findUnique({ where: { code: 'X-2' } })).toBeNull();
     const u = await h.app.inject({ method: 'POST', url: '/api/users', headers: bearer(t), payload: { email: 'b@example.com', password: 'long-enough-pass', role: 'ORGANIZATION_ADMIN', organization_id: o.json().id } });
     expect(u.statusCode).toBe(201);
     expect(u.body).not.toContain('passwordHash');
