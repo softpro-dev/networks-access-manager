@@ -120,8 +120,12 @@ if ($LASTEXITCODE -ne 0) { throw "dependency install failed" }
 if (-not $SkipTests) {
   # A private temp dir: the shared %TEMP%\pytest-of-<user> can hold folders owned by an
   # elevated run, which makes pytest fail with "Access is denied".
-  & $py -m pytest -p no:cacheprovider --basetemp (Join-Path $Root "build\pytest")
+  # A fresh folder per run: some security tests lock down the permissions of their temp dirs, so a
+  # fixed folder could not be cleaned up by the next run.
+  $pytestTmp = Join-Path $Root ("build\pytest-" + (Get-Date -Format "yyyyMMddHHmmss"))
+  & $py -m pytest -p no:cacheprovider --basetemp $pytestTmp
   if ($LASTEXITCODE -ne 0) { throw "tests failed" }
+  Remove-Item -Recurse -Force $pytestTmp -ErrorAction SilentlyContinue
 }
 
 foreach ($app in $apps) {
