@@ -3,7 +3,8 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { get } from '@/lib/api';
+import { get, post } from '@/lib/api';
+import { useAction } from '@/lib/queries';
 import { useOrgScope, setScopedOrg } from '@/lib/orgScope';
 import { absTime, deviceName, relTime } from '@/lib/format';
 import { DEVICE_STATUSES, type Device, type DeviceStatus, type Page } from '@/lib/types';
@@ -18,17 +19,39 @@ type SortKey = 'name' | 'org' | 'serial' | 'mac' | 'hostname' | 'status' | 'sync
 
 /** Whether this computer's service has the latest restrictions, and when it last checked in. */
 function SyncedCell({ device: d }: { device: Device }) {
-  if (d.synced === null) return <span className="muted" title="Its service has never fetched restrictions">Never</span>;
+  // Reset forgets the last check-in: the cell shows "Never" until the service fetches again,
+  // which proves it is still connecting.
+  const reset = useAction(() => post<Device>(`/devices/${d.id}/reset-sync`), {
+    success: `Sync reset for ${deviceName(d)} — it shows Synced again after its next check-in`,
+    invalidate: [['devices'], ['device', d.id]],
+    toastErrors: true,
+  });
+  if (d.synced === null) return <span className="muted" title="Its service has not fetched restrictions (yet)">Never</span>;
   const when = d.synced_at ? <span className="muted small" title={absTime(d.synced_at)}> · {relTime(d.synced_at)}</span> : null;
+  const resetBtn = (
+    <button
+      type="button"
+      className="icon-btn"
+      style={{ fontSize: 15 }}
+      aria-label={`Reset sync of ${deviceName(d)}`}
+      title="Reset sync: show Never until its service checks in again"
+      disabled={reset.isPending}
+      onClick={() => reset.mutate(undefined)}
+    >
+      ↻
+    </button>
+  );
   return d.synced ? (
     <span title="Its service has the latest restrictions">
       <Badge tone="green">✓ Synced</Badge>
       {when}
+      {resetBtn}
     </span>
   ) : (
     <span title="Restrictions changed after its last fetch; it updates on its next check-in">
       <Badge tone="amber">Out of date</Badge>
       {when}
+      {resetBtn}
     </span>
   );
 }

@@ -13,6 +13,7 @@ import {
   reenrollDevice,
   rejectDevice,
   revokeDevice,
+  resetDeviceSync,
   updateDevice,
   updateDeviceBody,
 } from './devices.service.js';
@@ -33,5 +34,6 @@ export async function deviceRoutes(app: FastifyInstance) {
   app.post('/api/devices/:id/approve', async (req) => approveDevice(ctx, getAdmin(req), id(req.params), req.ip));
   app.post('/api/devices/:id/reject', async (req) => rejectDevice(ctx, getAdmin(req), id(req.params), req.ip));
   app.post('/api/devices/:id/revoke', async (req) => revokeDevice(ctx, getAdmin(req), id(req.params), req.ip));
+  app.post('/api/devices/:id/reset-sync', async (req) => resetDeviceSync(ctx, getAdmin(req), id(req.params), req.ip));
   app.post('/api/devices/:id/re-enroll', async (req) => reenrollDevice(ctx, getAdmin(req), id(req.params), req.ip));
 }

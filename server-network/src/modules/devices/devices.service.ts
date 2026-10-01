@@ -304,6 +304,17 @@ export async function rejectDevice(ctx: AppContext, p: AdminPrincipal, id: strin
   return getDevice(ctx, p, id);
 }
 
+/**
+ * Forget what this computer's service last fetched, so the console shows "Never" until its next
+ * check-in — a quick way to confirm the service is still connecting.
+ */
+export async function resetDeviceSync(ctx: AppContext, p: AdminPrincipal, id: string, ip: string) {
+  const d = await loadDevice(ctx, p, id);
+  await ctx.prisma.device.update({ where: { id: d.id }, data: { syncedSha256: null, syncedAt: null, syncedVia: null } });
+  await audit(ctx, p, d, AuditAction.DEVICE_SYNC_RESET, ip);
+  return getDevice(ctx, p, id);
+}
+
 /** Revoke: device → REVOKED and every credential revoked immediately (checked on every agent request). */
 export async function revokeDevice(ctx: AppContext, p: AdminPrincipal, id: string, ip: string) {
   const d = await loadDevice(ctx, p, id);

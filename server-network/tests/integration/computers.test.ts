@@ -214,6 +214,10 @@ describeDb('computers, login links, organization delete, analytics', () => {
     expect((await syncedOf()).synced).toBe(false);
     expect((await svc({ authorization: `Bearer ${token}`, 'x-device-mac': '00:1A:2B:3C:4D:99' })).statusCode).toBe(200);
     expect((await syncedOf()).synced).toBe(true);
+    // Reset sync: back to "never" until the next check-in.
+    expect((await a('POST', `/api/devices/${pc.id}/reset-sync`)).json()).toMatchObject({ synced: null, synced_at: null });
+    expect((await svc({ authorization: `Bearer ${token}`, 'x-device-mac': '00:1A:2B:3C:4D:99' })).statusCode).toBe(200);
+    expect((await syncedOf()).synced).toBe(true);
     await a('POST', `/api/policies/${rst1.id}/activate`);
 
     // No org-scoped policy → 404 (org B has none).
