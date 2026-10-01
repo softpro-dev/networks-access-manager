@@ -212,7 +212,7 @@ class FakeServer:
             return err(404, "NO_POLICY_ASSIGNED")
         a = self.org_assignment
         inm = request.headers.get("if-none-match")
-        self.org_policy_downloads.append({"if_none_match": inm})
+        self.org_policy_downloads.append({"if_none_match": inm, "device_mac": request.headers.get("x-device-mac")})
         if inm == a.etag:
             return httpx.Response(304, headers={"etag": a.etag})
         body = a.raw_body if a.raw_body is not None else json.dumps(self.org_document()).encode()

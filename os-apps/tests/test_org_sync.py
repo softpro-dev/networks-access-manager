@@ -44,9 +44,13 @@ def build(tmp_path, server, backend, clock, **overrides):
             backend=backend,
             resolver=lambda host, port: ["198.51.100.10"],
             clock=clock,
+            device_mac=lambda: TEST_MAC,
         )
     )
     return agent, db, api
+
+
+TEST_MAC = "AA:BB:CC:DD:EE:01"
 
 
 @pytest.fixture
@@ -153,3 +157,13 @@ def test_restart_reasserts_cached_policy(tmp_path):
     assert backend2.installed is not None and backend2.installed.version == 1
     api2.close()
     db2.close()
+
+
+def test_each_fetch_identifies_the_computer_by_mac(parts):
+    """X-Device-MAC (contract §4.2) is sent on full downloads and on 304 check-ins alike."""
+    agent, db, api, server, backend, clock = parts
+    server.assign_org(version=1)
+    agent.tick()
+    agent.tick()
+    assert [d["device_mac"] for d in server.org_policy_downloads] == [TEST_MAC, TEST_MAC]
+    assert server.org_policy_downloads[1]["if_none_match"] is not None  # second one was a 304 check-in

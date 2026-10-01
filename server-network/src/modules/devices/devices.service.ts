@@ -4,7 +4,7 @@ import type { AppContext } from '../../types.js';
 import type { AdminPrincipal } from '../../domain/rbac.js';
 import { assertOrgAccess, listScope } from '../../domain/rbac.js';
 import { AuditAction, writeAudit } from '../../services/audit.js';
-import { EFFECTIVE_POLICY_ID, resolveEffectivePolicy } from '../../services/policyResolution.js';
+import { currentDeviceSha, currentOrgSha, EFFECTIVE_POLICY_ID, resolveEffectivePolicy } from '../../services/policyResolution.js';
 import { badRequest, conflict } from '../../utils/errors.js';
 import { iso, pageArgs, pageBody } from '../../utils/http.js';
 import { makePolicyEtag } from '../../domain/etag.js';
@@ -22,10 +22,37 @@ const deviceInclude = {
 
 type DeviceRow = Prisma.DeviceGetPayload<{ include: typeof deviceInclude }>;
 
-export function serializeDevice(d: DeviceRow, heartbeatIntervalSeconds: number) {
+/**
+ * Synced = the restrictions this computer's service last fetched equal what it should have now
+ * (null = it never fetched). The org-wide target is computed once per organization.
+ */
+async function syncStatus(ctx: AppContext, rows: DeviceRow[]): Promise<Map<string, boolean | null>> {
+  const orgTargets = new Map<string, Promise<string>>();
+  const out = new Map<string, boolean | null>();
+  await Promise.all(
+    rows.map(async (d) => {
+      if (!d.syncedSha256) return void out.set(d.id, null);
+      let target: string;
+      if (d.syncedVia === 'ORG') {
+        if (!orgTargets.has(d.organizationId)) orgTargets.set(d.organizationId, currentOrgSha(ctx.prisma, d.organizationId));
+        target = await orgTargets.get(d.organizationId)!;
+      } else {
+        target = await currentDeviceSha(ctx.prisma, d);
+      }
+      out.set(d.id, target === d.syncedSha256);
+    }),
+  );
+  return out;
+}
+
+export function serializeDevice(d: DeviceRow, heartbeatIntervalSeconds: number, synced: boolean | null = null) {
   const online = d.lastHeartbeatAt ? Date.now() - d.lastHeartbeatAt.getTime() < heartbeatIntervalSeconds * 3 * 1000 : false;
   return {
     id: d.id,
+    /** has the latest restrictions (null = its service never fetched) */
+    synced,
+    synced_at: iso(d.syncedAt),
+    synced_via: d.syncedVia,
     display_name: d.displayName,
     title: d.displayName,
     serial_number: d.serialNumber,
@@ -128,7 +155,8 @@ export async function listDevices(ctx: AppContext, p: AdminPrincipal, q: z.infer
     ctx.prisma.device.findMany({ where, include: deviceInclude, orderBy: { createdAt: 'desc' }, ...pageArgs(q) }),
     ctx.prisma.device.count({ where }),
   ]);
-  return pageBody(items.map((d) => serializeDevice(d, ctx.config.heartbeatIntervalSeconds)), total, q);
+  const synced = await syncStatus(ctx, items);
+  return pageBody(items.map((d) => serializeDevice(d, ctx.config.heartbeatIntervalSeconds, synced.get(d.id) ?? null)), total, q);
 }
 
 async function loadDevice(ctx: AppContext, p: AdminPrincipal, id: string) {
@@ -138,12 +166,13 @@ async function loadDevice(ctx: AppContext, p: AdminPrincipal, id: string) {
 
 export async function getDevice(ctx: AppContext, p: AdminPrincipal, id: string) {
   const d = await loadDevice(ctx, p, id);
-  const [credentials, effective] = await Promise.all([
+  const [credentials, effective, synced] = await Promise.all([
     ctx.prisma.deviceCredential.findMany({ where: { deviceId: d.id }, orderBy: { createdAt: 'desc' } }),
     resolveEffectivePolicy(ctx.prisma, d),
+    syncStatus(ctx, [d]),
   ]);
   return {
-    ...serializeDevice(d, ctx.config.heartbeatIntervalSeconds),
+    ...serializeDevice(d, ctx.config.heartbeatIntervalSeconds, synced.get(d.id) ?? null),
     interfaces: d.interfaces,
     credentials: credentials.map((c) => ({
       credential_id: c.id,

@@ -30,7 +30,10 @@ def test_request_shape_and_authorization_header():
     assert req.method == "GET"
     assert req.url.path == "/api/agent/org-policy"
     assert req.headers["authorization"] == f"Bearer {ACCESS_TOKEN}"
+    assert "x-device-mac" not in req.headers  # optional: only sent when known
     assert fetch.etag == server.org_assignment.etag
+    c.org_policy(ACCESS_TOKEN, device_mac="AA:BB:CC:DD:EE:01")
+    assert server.requests[-1].headers["x-device-mac"] == "AA:BB:CC:DD:EE:01"
     c.close()
 
 

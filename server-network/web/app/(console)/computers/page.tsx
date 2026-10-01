@@ -14,7 +14,24 @@ import { GroupsPanel } from '@/components/GroupsPanel';
 import { AddMyPcButton, BulkAddFromNetworkDialog } from '@/components/NetworkDevices';
 import { useConnectedDevices } from '@/lib/connectedDevices';
 
-type SortKey = 'name' | 'org' | 'serial' | 'mac' | 'hostname' | 'status' | 'heartbeat' | 'ip' | 'agent' | 'effective';
+type SortKey = 'name' | 'org' | 'serial' | 'mac' | 'hostname' | 'status' | 'synced' | 'heartbeat' | 'ip' | 'agent' | 'effective';
+
+/** Whether this computer's service has the latest restrictions, and when it last checked in. */
+function SyncedCell({ device: d }: { device: Device }) {
+  if (d.synced === null) return <span className="muted" title="Its service has never fetched restrictions">Never</span>;
+  const when = d.synced_at ? <span className="muted small" title={absTime(d.synced_at)}> · {relTime(d.synced_at)}</span> : null;
+  return d.synced ? (
+    <span title="Its service has the latest restrictions">
+      <Badge tone="green">✓ Synced</Badge>
+      {when}
+    </span>
+  ) : (
+    <span title="Restrictions changed after its last fetch; it updates on its next check-in">
+      <Badge tone="amber">Out of date</Badge>
+      {when}
+    </span>
+  );
+}
 
 function sortValue(d: Device, k: SortKey): string | number {
   switch (k) {
@@ -30,6 +47,8 @@ function sortValue(d: Device, k: SortKey): string | number {
       return (d.hostname ?? '').toLowerCase();
     case 'status':
       return d.status;
+    case 'synced':
+      return d.synced === true ? 0 : d.synced === false ? 1 : 2;
     case 'heartbeat':
       return d.last_heartbeat_at ? new Date(d.last_heartbeat_at).getTime() : 0;
     case 'ip':
@@ -146,6 +165,7 @@ function ComputersTable() {
                 <SortTh label="MAC" k="mac" sort={sort} onSort={onSort} />
                 <th>Groups</th>
                 <SortTh label="Status" k="status" sort={sort} onSort={onSort} />
+                <SortTh label="Synced" k="synced" sort={sort} onSort={onSort} />
                 <SortTh label="Hostname" k="hostname" sort={sort} onSort={onSort} />
                 <SortTh label="Last heartbeat" k="heartbeat" sort={sort} onSort={onSort} />
                 <SortTh label="IP" k="ip" sort={sort} onSort={onSort} />
@@ -189,6 +209,9 @@ function ComputersTable() {
                   <td>
                     <StatusBadge status={d.status} />
                     {d.policy_status?.error_code && <div className="small text-danger">{d.policy_status.error_code}</div>}
+                  </td>
+                  <td className="nowrap">
+                    <SyncedCell device={d} />
                   </td>
                   <td>{d.hostname ?? <span className="muted">not registered</span>}</td>
                   <td className="nowrap">

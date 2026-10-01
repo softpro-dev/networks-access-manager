@@ -202,6 +202,20 @@ describeDb('computers, login links, organization delete, analytics', () => {
     expect((await svc({ authorization: `Bearer ${token}` })).statusCode).toBe(200);
     expect((await h.prisma.policyAssignment.findFirstOrThrow({ where: { policyId: rst1.id } })).synced).toBe(true);
 
+    // Per-computer Synced: the service identifies itself with X-Device-MAC (contract §4.2).
+    const pc = (await a('POST', '/api/devices', { mac_address: '00:1A:2B:3C:4D:99', title: 'Synced PC' })).json();
+    const syncedOf = async () => (await a('GET', `/api/devices/${pc.id}`)).json();
+    expect(await syncedOf()).toMatchObject({ synced: null, synced_at: null });
+    expect((await svc({ authorization: `Bearer ${token}`, 'x-device-mac': '00-1a-2b-3c-4d-99' })).statusCode).toBe(200);
+    expect(await syncedOf()).toMatchObject({ synced: true, synced_via: 'ORG' });
+    const listedPc = (await a('GET', `/api/devices?organization_id=${orgA}`)).json().items.find((d: { id: string }) => d.id === pc.id);
+    expect(listedPc.synced).toBe(true);
+    await a('POST', `/api/policies/${rst1.id}/deactivate`); // content changes → out of date until next fetch
+    expect((await syncedOf()).synced).toBe(false);
+    expect((await svc({ authorization: `Bearer ${token}`, 'x-device-mac': '00:1A:2B:3C:4D:99' })).statusCode).toBe(200);
+    expect((await syncedOf()).synced).toBe(true);
+    await a('POST', `/api/policies/${rst1.id}/activate`);
+
     // No org-scoped policy → 404 (org B has none).
     const tokenB = (await as(adminB)('POST', `/api/organizations/${orgB}/access-token`)).json().access_token;
     expect((await svc({ authorization: `Bearer ${tokenB}` })).statusCode).toBe(404);

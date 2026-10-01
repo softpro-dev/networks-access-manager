@@ -188,3 +188,37 @@ export async function markOrgAssignmentsSynced(db: Client, organizationId: strin
 export async function markPolicyUnsynced(db: Client, policyId: string): Promise<void> {
   await db.policyAssignment.updateMany({ where: { policyId, synced: true }, data: { synced: false } });
 }
+
+// ---------------- per-computer sync status (Device.syncedSha256 / syncedAt) ----------------
+
+/** syncedSha256 value meaning "the service was told no restriction applies" (404 NO_POLICY_ASSIGNED). */
+export const NO_POLICY_SHA = 'none';
+
+/** What an org-token service should have right now (read-only: no version bump, unlike resolve*). */
+export async function currentOrgSha(db: Client, organizationId: string): Promise<string> {
+  const merged = mergeRestrictions(await collectOrgRestrictions(db, organizationId));
+  return merged ? canonicalSha256(merged.content) : NO_POLICY_SHA;
+}
+
+/** What an enrolled agent should have right now (read-only). */
+export async function currentDeviceSha(db: Client, device: { id: string; organizationId: string }): Promise<string> {
+  const merged = mergeRestrictions(await collectRestrictions(db, device));
+  return merged ? canonicalSha256(merged.content) : NO_POLICY_SHA;
+}
+
+/** Remember what this enrolled computer just fetched (policy document, version check or 304). */
+export async function recordDeviceSync(db: Client, deviceId: string, sha: string | null): Promise<void> {
+  await db.device.update({ where: { id: deviceId }, data: { syncedSha256: sha ?? NO_POLICY_SHA, syncedAt: new Date(), syncedVia: 'DEVICE' } });
+}
+
+/**
+ * An org-token service fetched the organization policy and identified itself with its MAC
+ * (X-Device-MAC, contract §4.2): remember it on the matching computer of that organization.
+ */
+export async function recordOrgSync(db: Client, organizationId: string, mac: string | null, sha: string | null): Promise<void> {
+  if (!mac) return;
+  await db.device.updateMany({
+    where: { organizationId, macAddress: mac },
+    data: { syncedSha256: sha ?? NO_POLICY_SHA, syncedAt: new Date(), syncedVia: 'ORG' },
+  });
+}

@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import type { z } from 'zod';
 import type { AppContext, DeviceIdentity } from '../../types.js';
 import { AuditAction, writeAudit } from '../../services/audit.js';
-import { EFFECTIVE_POLICY_ID, markDeviceAssignmentsSynced, resolveEffectivePolicy, type EffectivePolicy } from '../../services/policyResolution.js';
+import { EFFECTIVE_POLICY_ID, markDeviceAssignmentsSynced, recordDeviceSync, resolveEffectivePolicy, type EffectivePolicy } from '../../services/policyResolution.js';
 import { normalizeMac } from '../../domain/mac.js';
 import { generateDeviceToken, hashEnrollmentSecret } from '../../domain/deviceToken.js';
 import { canonicalSha256 } from '../../domain/canonicalJson.js';
@@ -197,12 +197,16 @@ export async function heartbeat(ctx: AppContext, dev: DeviceIdentity, body: z.in
 }
 
 export async function policyVersion(ctx: AppContext, dev: DeviceIdentity) {
-  return policyRef(await effectiveFor(ctx, dev)) ?? { policy_id: null, version: 0, etag: null };
+  const e = await effectiveFor(ctx, dev);
+  // The version check is how an up-to-date agent "checks in": record it for the console's Synced column.
+  await recordDeviceSync(ctx.prisma, dev.deviceId, e?.contentSha256 ?? null);
+  return policyRef(e) ?? { policy_id: null, version: 0, etag: null };
 }
 
 /** Build the §4 Policy Document for the authenticated device. Returns null when nothing applies. */
 export async function policyDocument(ctx: AppContext, dev: DeviceIdentity) {
   const e = await effectiveFor(ctx, dev);
+  await recordDeviceSync(ctx.prisma, dev.deviceId, e?.contentSha256 ?? null);
   if (!e) return null;
   const sha = e.contentSha256;
   if (canonicalSha256(e.content) !== sha) {

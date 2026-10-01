@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE `Device` ADD COLUMN `syncedSha256` VARCHAR(64) NULL,
+    ADD COLUMN `syncedAt` DATETIME(3) NULL,
+    ADD COLUMN `syncedVia` VARCHAR(8) NULL;

@@ -132,16 +132,19 @@ class AgentApiClient:
             raise ApiUnavailable("policy: document too large", resp.status_code)
         return PolicyFetch(kind="document", body=resp.content, etag=resp.headers.get("etag"))
 
-    def org_policy(self, access_token: str, if_none_match: str | None = None) -> PolicyFetch:
+    def org_policy(self, access_token: str, if_none_match: str | None = None, device_mac: str | None = None) -> PolicyFetch:
         """Org-token mode: fetch the merged organization-wide policy (contract §4.2).
 
         `GET {api}/agent/org-policy` with `Authorization: Bearer <ACCESS_TOKE>`.
         200 (+ETag) → document, 304 → not_modified, 404 NO_POLICY_ASSIGNED → none.
         401 INVALID_ACCESS_TOKEN and other 4xx propagate as ApiError.
+        `device_mac` (optional `X-Device-MAC`) lets the console show which computer is synced.
         """
         headers = self._bearer(access_token)
         if if_none_match:
             headers["If-None-Match"] = if_none_match
+        if device_mac:
+            headers["X-Device-MAC"] = device_mac
         try:
             resp = self._send("GET", "agent/org-policy", headers=headers)
         except ApiError as e:

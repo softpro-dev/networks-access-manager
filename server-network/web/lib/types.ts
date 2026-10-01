@@ -91,6 +91,12 @@ export interface PolicyStatus {
 
 export interface Device {
   id: string;
+  /** its service has the latest restrictions; false = something changed since; null = never fetched */
+  synced: boolean | null;
+  /** when its service last fetched restrictions (connectivity) */
+  synced_at: string | null;
+  /** 'ORG' (org-token service, matched by MAC) or 'DEVICE' (enrolled agent) */
+  synced_via: string | null;
   display_name: string | null;
   /** Same value as display_name (the admin-given title). */
   title: string | null;

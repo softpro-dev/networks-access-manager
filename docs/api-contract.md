@@ -305,8 +305,11 @@ rotating or clearing it). A service authenticates with it and receives the merge
 policy (all `ORGANIZATION`-scoped restrictions merged as in §4.1); group/device targeting does not
 apply in this mode.
 
-Request: `GET /api/agent/org-policy` with `Authorization: Bearer <access token>` and optional
-`If-None-Match`. Responses: `200` (body below, with `ETag`), `304 Not Modified`,
+Request: `GET /api/agent/org-policy` with `Authorization: Bearer <access token>`, optional
+`If-None-Match`, and optional `X-Device-MAC: AA:BB:CC:DD:EE:FF` (the service's primary-interface MAC,
+the same selection as the heartbeat's `is_primary` interface). The MAC never changes the response; the
+server only uses it to record which computer of the organization checked in (console "Synced" column:
+the content hash it was served and the time, also on `304` and `404`). Unknown/invalid MACs are ignored. Responses: `200` (body below, with `ETag`), `304 Not Modified`,
 `404 NO_POLICY_ASSIGNED`, `401 INVALID_ACCESS_TOKEN` (missing/invalid/rotated/cleared token, or
 disabled organization).
 

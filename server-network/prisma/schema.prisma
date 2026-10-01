@@ -163,6 +163,13 @@ model Device {
   currentPolicyId      String?
   currentPolicy        Policy?      @relation("DeviceCurrentPolicy", fields: [currentPolicyId], references: [id], onDelete: SetNull)
   currentPolicyVersion Int?
+  /// content sha256 of the restrictions this computer's service last fetched ('none' = nothing
+  /// assigned); the console compares it with the current merge to show "Synced"
+  syncedSha256         String?      @db.VarChar(64)
+  /// when its service last fetched restrictions (connectivity indicator)
+  syncedAt             DateTime?
+  /// 'ORG' (org-token service, matched by X-Device-MAC) or 'DEVICE' (enrolled agent)
+  syncedVia            String?      @db.VarChar(8)
   createdAt            DateTime     @default(now())
   updatedAt            DateTime     @updatedAt
 

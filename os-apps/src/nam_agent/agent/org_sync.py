@@ -49,6 +49,20 @@ class OrgAgentDeps:
     backend: EnforcementBackend
     resolver: Resolver = system_resolver
     clock: Callable[[], float] = time.time
+    #: This computer's primary MAC, sent as X-Device-MAC so the console can show it as synced.
+    device_mac: Callable[[], str | None] | None = None
+
+
+def primary_mac(preferred_interface: str | None = None) -> str | None:
+    """MAC of the primary interface, the same selection the agent reports elsewhere. Never raises."""
+    try:
+        from ..network.interfaces import discover
+
+        primary = next((i for i in discover(preferred_interface) if i.is_primary), None)
+        return primary.mac if primary else None
+    except Exception:  # noqa: BLE001 - identification is optional
+        log.debug("could not determine the primary MAC", exc_info=True)
+        return None
 
 
 class OrgAgent:
@@ -155,7 +169,8 @@ class OrgAgent:
     def _cycle(self) -> float:
         token = self._access_token()
         active = self.active_policy()
-        fetch = self.api.org_policy(token, if_none_match=active.etag if active else None)
+        mac_fn = self.d.device_mac or (lambda: primary_mac(self.settings.primary_interface))
+        fetch = self.api.org_policy(token, if_none_match=active.etag if active else None, device_mac=mac_fn())
         # A successful request proves the token and server are good.
         self.backoff.reset()
         self.db.set_runtime("org_last_sync_ok_at", utcnow())
