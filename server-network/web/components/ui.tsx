@@ -2,7 +2,7 @@
 import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { ApiError } from '@/lib/api';
 
-type Variant = 'primary' | 'secondary' | 'danger' | 'warning' | 'ghost';
+type Variant = 'primary' | 'secondary' | 'danger' | 'warning' | 'cyan' | 'ghost';
 
 export function Button({
   variant = 'secondary',
