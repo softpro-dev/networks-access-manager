@@ -300,7 +300,7 @@ export function LoginLinkButton({ org }: { org: Organization }) {
       });
   };
   return (
-    <Button size="sm" busy={m.isPending} disabled={org.status !== 'ACTIVE'} title={org.status !== 'ACTIVE' ? 'Organization is disabled' : `Copy a one-time sign-in link for an administrator of ${org.code}`} onClick={onClick}>
+    <Button size="sm" variant="primary" busy={m.isPending} disabled={org.status !== 'ACTIVE'} title={org.status !== 'ACTIVE' ? 'Organization is disabled' : `Copy a one-time sign-in link for an administrator of ${org.code}`} onClick={onClick}>
       Copy login link
     </Button>
   );
