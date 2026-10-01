@@ -5,18 +5,27 @@
 #   Windows x64 : scripts\build.ps1   (uses the Edge WebView2 runtime at run time)
 #   macOS       : scripts/build.sh    (uses system WebKit via pyobjc)
 #
-# onedir, windowed. This app packages independently from the service and must NOT
-# import the service's Windows-only modules (it only depends on nam_admin).
+# onedir, windowed. This app packages independently from the service. Of the service package
+# it may bundle ONLY nam_agent.network (stdlib interface discovery, used by the LAN scan so
+# "Add My PC" gets the same MAC the agent reports); every other service module is excluded.
 
 import sys
 
 block_cipher = None
 
-hidden = ["webview"]
+hidden = ["webview", "nam_agent.network.interfaces"]
 if sys.platform == "win32":
-    hidden += ["webview.platforms.edgechromium", "clr_loader", "pythonnet"]
+    hidden += ["webview.platforms.edgechromium", "clr_loader", "pythonnet", "nam_agent.network.win_adapters"]
 elif sys.platform == "darwin":
-    hidden += ["webview.platforms.cocoa"]
+    hidden += ["webview.platforms.cocoa", "nam_agent.network.fallback"]
+
+# Everything in the service except nam_agent.network (+ its tiny platform helper).
+SERVICE_MODULES = [
+    f"nam_agent.{m}"
+    for m in ("agent", "api", "cli", "config", "enforcement", "identity", "logs", "policy", "security", "service", "storage")
+]
+# psutil backs the macOS interface fallback; Windows uses GetAdaptersAddresses via ctypes.
+EXTRA_EXCLUDES = ["psutil"] if sys.platform == "win32" else []
 
 a = Analysis(
     ["src/main_admin.py"],
@@ -26,8 +35,7 @@ a = Analysis(
     hiddenimports=hidden,
     hookspath=[],
     runtime_hooks=[],
-    # Keep the service package out of the GUI app entirely.
-    excludes=["nam_agent", "pytest", "psutil"],
+    excludes=SERVICE_MODULES + EXTRA_EXCLUDES + ["pytest"],
     cipher=block_cipher,
     noarchive=False,
 )

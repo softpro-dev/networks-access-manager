@@ -16,7 +16,7 @@ import argparse
 import sys
 
 from . import ADMIN_VERSION, APP_NAME, WINDOW_TITLE
-from .config import about_text, check_reachable, error_page_html, resolve_admin_server
+from .config import about_text, check_reachable, error_page_html, loading_page_html, resolve_admin_server
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -40,14 +40,27 @@ def run(server_url: str | None) -> int:
 
     reachable = bool(server_url) and check_reachable(server_url)
     if reachable:
-        window = webview.create_window(WINDOW_TITLE, url=server_url)
+        # Show a loading page at once, scan the LAN in pywebview's worker thread, then open the
+        # console with ?connected_devices=... (see network_scan).
+        window = webview.create_window(WINDOW_TITLE, html=loading_page_html())
+        _install_about_menu(webview, server_url)
+        webview.start(_open_console, (window, server_url))
     else:
         detail = "" if server_url else "ADMIN_SERVER is not set in agent.env or the environment."
-        window = webview.create_window(WINDOW_TITLE, html=error_page_html(server_url, detail))
-
-    _install_about_menu(webview, server_url)
-    webview.start()
+        webview.create_window(WINDOW_TITLE, html=error_page_html(server_url, detail))
+        _install_about_menu(webview, server_url)
+        webview.start()
     return 0
+
+
+def _open_console(window, server_url: str) -> None:
+    from .network_scan import connected_devices, with_devices_param
+
+    try:
+        devices = connected_devices()
+    except Exception:  # noqa: BLE001 - never block the console on a failed scan
+        devices = []
+    window.load_url(with_devices_param(server_url, devices) if devices else server_url)
 
 
 def _install_about_menu(webview, server_url: str | None) -> None:

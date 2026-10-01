@@ -11,6 +11,8 @@ import { Alert, Badge, Button, Empty, ErrorBox, Mono, PageHeader, Pagination, So
 import { DeviceActions } from '@/components/DeviceActions';
 import { ComputerFormDialog, DeleteComputerDialog, useGroups } from '@/components/ComputerDialogs';
 import { GroupsPanel } from '@/components/GroupsPanel';
+import { AddMyPcButton, BulkAddFromNetworkDialog } from '@/components/NetworkDevices';
+import { useConnectedDevices } from '@/lib/connectedDevices';
 
 type SortKey = 'name' | 'org' | 'serial' | 'mac' | 'hostname' | 'status' | 'heartbeat' | 'ip' | 'agent' | 'effective';
 
@@ -66,6 +68,8 @@ function ComputersTable() {
   const [pageSize, setPageSize] = useState(50);
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' } | null>(null);
   const [adding, setAdding] = useState(false);
+  const [bulkAdding, setBulkAdding] = useState(false);
+  const connected = useConnectedDevices();
   const [editing, setEditing] = useState<Device | null>(null);
   const [deleting, setDeleting] = useState<Device | null>(null);
   const dq = useDebounced(q.trim());
@@ -117,6 +121,10 @@ function ComputersTable() {
             </option>
           ))}
         </select>
+        <AddMyPcButton isSuper={isSuper} orgId={orgId} />
+        <Button onClick={() => setBulkAdding(true)} disabled={!connected} title={connected ? `Add computers found on the local network (${connected.devices.length})` : 'Open the console from the SoftProIt Network Admin desktop app to scan the network.'}>
+          Add from network{connected ? ` (${connected.devices.length})` : ''}
+        </Button>
         <Button variant="primary" onClick={() => setAdding(true)}>
           Add computer
         </Button>
@@ -240,6 +248,7 @@ function ComputersTable() {
       {sort && <p className="muted small">Sorting applies to the current page; the API returns the newest computers first.</p>}
 
       <ComputerFormDialog open={adding} defaultOrgId={orgId} onClose={() => setAdding(false)} />
+      <BulkAddFromNetworkDialog open={bulkAdding} isSuper={isSuper} orgId={orgId} onClose={() => setBulkAdding(false)} />
       <ComputerFormDialog open={!!editing} device={editing} defaultOrgId={orgId} onClose={() => setEditing(null)} />
       <DeleteComputerDialog device={deleting} onClose={() => setDeleting(null)} />
     </>

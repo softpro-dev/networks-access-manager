@@ -167,6 +167,24 @@ def error_page_html(server_url: str | None, detail: str = "") -> str:
 """
 
 
+def loading_page_html() -> str:
+    """Shown while the LAN scan runs before the console opens (a couple of seconds)."""
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>{escape(APP_NAME)}</title>
+<style>
+  :root {{ color-scheme: light dark; }}
+  body {{ font-family: -apple-system, "Segoe UI", system-ui, sans-serif; margin: 0; display: flex;
+         min-height: 100vh; align-items: center; justify-content: center; background: #f5f6f8; color: #1c1e21; }}
+  @media (prefers-color-scheme: dark) {{ body {{ background: #1c1e21; color: #e7e9ea; }} }}
+  .spin {{ width: 28px; height: 28px; margin: 0 auto 1rem; border-radius: 50%;
+          border: 3px solid rgba(127,127,127,.3); border-top-color: #2d6cdf; animation: s 0.8s linear infinite; }}
+  @keyframes s {{ to {{ transform: rotate(360deg); }} }}
+</style></head>
+<body><div style="text-align:center"><div class="spin"></div>
+<p>Scanning your network…</p></div></body></html>
+"""
+
+
 def check_reachable(url: str, *, timeout: float = 5.0, transport=None) -> bool:
     """Best-effort reachability probe used before loading the window. Never raises."""
     import httpx

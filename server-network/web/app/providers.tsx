@@ -1,11 +1,18 @@
 'use client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { ApiError } from '@/lib/api';
 import { AuthProvider } from '@/lib/auth';
+import { captureConnectedDevicesFromUrl, stripConnectedDevicesParam } from '@/lib/connectedDevices';
 import { ToastProvider } from '@/components/toast';
 
 export function Providers({ children }: { children: ReactNode }) {
+  // Capture ?connected_devices= during the first client render, before any child effect (e.g. the
+  // auth redirect to /login) can navigate away and drop the query string; strip it after mount.
+  const [hadDevicesParam] = useState(captureConnectedDevicesFromUrl);
+  useEffect(() => {
+    if (hadDevicesParam) stripConnectedDevicesParam();
+  }, [hadDevicesParam]);
   const [qc] = useState(
     () =>
       new QueryClient({

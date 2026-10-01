@@ -9,6 +9,6 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 
 # Copy exe to download folder
 
-```bash
+```bash of PowerShell
 Copy-Item D:\Projects\networks-access-manager\os-apps\installer\Output\SoftProIt-Network-1.0.0-setup.exe "C:\Users\SURFACE 4\Downloads\SoftProIt-Network-1.0.0-setup.exe"
 ```
