@@ -7,14 +7,21 @@ with 64-bit Python 3.11+ and (for the installer) Inno Setup 6.
 
 ```powershell
 cd os-apps
-powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Installer
-# -> dist\OrganizationNetworkAgent\OrganizationNetworkAgent.exe  (onedir)
-# -> installer\Output\OrganizationNetworkAgent-1.0.0-setup.exe
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Installer                 # both
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Target Service -Installer # one
+# -> dist\SoftProIt.network.conducted\SoftProIt.network.conducted.exe  (service, onedir)
+# -> dist\SoftProIt.network.admin\SoftProIt.network.admin.exe          (desktop app, onedir)
+# -> installer\Output\SoftProIt-Network-Service-<ver>-setup.exe  (every managed computer)
+# -> installer\Output\SoftProIt-Network-Admin-<ver>-setup.exe    (administrators' PCs)
 ```
 
+Or double-click `how-to\build-service-setup.bat` / `how-to\build-admin-setup.bat`.
+`<ver>` is `-Version`, else `BUILD_VERSION` (environment, then `os-apps\.env`), else 1.0.0.
+
 `build.ps1` creates `.venv`, installs `requirements-dev.txt` (includes pywin32 and
-PyInstaller on Windows), runs the tests, builds with `OrganizationNetworkAgent.spec`,
-and smoke-runs `--version`.
+PyInstaller on Windows), runs the tests, builds with `SoftProIt.network.conducted.spec` /
+`SoftProIt.network.admin.spec`, smoke-runs `--version`, and with `-Installer` compiles
+`installer\SoftProIt.Network.Service.iss` / `installer\SoftProIt.Network.Admin.iss`.
 
 **Why onedir:** onefile unpacks to `%TEMP%\_MEI*` on every start. For a LocalSystem
 service that is slower, attracts AV heuristics, leaves stale directories after

@@ -75,7 +75,7 @@ export ADMIN_SERVER=http://localhost:3001 NAM_ALLOW_INSECURE_HTTP=true ACCESS_TO
 
 PyInstaller can't cross-compile, so build on the target OS:
 
-- Windows x64: `powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Installer` (`-SkipTests` skips pytest). Produces both exes (onedir) in `dist/` plus the Inno Setup installer (`installer\Output\SoftProIt-Network-<ver>-setup.exe`). `-Installer` only finds ISCC under Program Files; with a per-user Inno Setup install run `"$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" installer\OrganizationNetworkAgent.iss` manually.
+- Windows x64: `powershell -ExecutionPolicy Bypass -File scripts\build.ps1 [-Target Admin|Service] -Installer` (default `-Target All`; `-SkipTests`; `-Version x.y.z`). Builds the exe(s) (onedir) in `dist/` and two separate Inno Setup installers in `installer\Output\`: `SoftProIt-Network-Admin-<ver>-setup.exe` (`installer\SoftProIt.Network.Admin.iss`, desktop app + `admin.env`) and `SoftProIt-Network-Service-<ver>-setup.exe` (`installer\SoftProIt.Network.Service.iss`, service + `agent.env`; keeps the old combined installer's AppId so it upgrades in place). Version: `-Version`, else `$env:BUILD_VERSION`, else `BUILD_VERSION` in `os-apps\.env`, else 1.0.0, passed as `ISCC /DAppVersion=`. Double-click wrappers: `how-to\build-admin-setup.bat`, `how-to\build-service-setup.bat`. pytest runs with `--basetemp build\pytest` (the shared `%TEMP%\pytest-of-<user>` can contain admin-owned folders).
 - macOS: `scripts/build.sh` (`SKIP_TESTS=1` skips pytest). Sign, notarize and build the .pkg per `installer/README-macos.md`. The launchd path has not been verified end-to-end.
 - Step-by-step build guides are in `how-to/`.
 

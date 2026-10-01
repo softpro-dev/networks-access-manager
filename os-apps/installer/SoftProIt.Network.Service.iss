@@ -1,27 +1,28 @@
-; Inno Setup 6 script for the SoftProIt network apps (Windows x64).
+; Inno Setup 6 script: SoftProIt Network SERVICE (Windows x64) — install on every computer to control.
 ;
-; Installs BOTH executables produced by scripts\build.ps1:
-;   - SoftProIt.network.conducted.exe  (background service; internal service name
-;     OrganizationNetworkAgent, auto start, recovery, restrictive service DACL)
-;   - SoftProIt.network.admin.exe      (desktop admin-console wrapper, Start-menu shortcut)
+; Installs SoftProIt.network.conducted.exe (background service; internal service name
+; OrganizationNetworkAgent, auto start, recovery, restrictive service DACL), collects the three
+; org-token settings and writes them to the config the service reads (agent.env).
+; The desktop admin app has its own installer: SoftProIt.Network.Admin.iss.
 ;
-; Collects the three documented org-token settings and writes them to the config the
-; service reads (agent.env). Build first, then:
-;   ISCC.exe installer\OrganizationNetworkAgent.iss   (or: scripts\build.ps1 -Installer)
+; Build: scripts\build.ps1 -Target Service -Installer   (or how-to\build-service-setup.bat)
+;   ISCC.exe /DAppVersion=1.2.3 installer\SoftProIt.Network.Service.iss
 ;
 ; Silent install:
 ;   setup.exe /VERYSILENT /SERVER=https://admin.example.com /TOKENFILE=C:\secure\token.txt /CACHE=5
 ; (Prefer /TOKENFILE over /TOKEN=...: command lines are visible to other processes.)
 
-#define AppName "SoftProIt Network Agent"
-#define AppVersion "1.0.0"
+#ifndef AppVersion
+  #define AppVersion "1.0.0"
+#endif
+#define AppName "SoftProIt Network Service"
 #define ServiceName "OrganizationNetworkAgent"
 #define SvcExeName "SoftProIt.network.conducted.exe"
-#define AdminExeName "SoftProIt.network.admin.exe"
-#define AdminDisplayName "SoftProIt Network Admin"
 #define DataRoot "{commonappdata}\OrganizationNetworkAgent"
 
 [Setup]
+; Same AppId and folder as the former combined "SoftProIt Network Agent" installer, so this
+; upgrades an existing install in place (the old bundled admin copy is removed below).
 AppId={{6C1E3E0A-3B7B-4E53-9E0C-0A6F3D5B2C11}
 AppName={#AppName}
 AppVersion={#AppVersion}
@@ -34,11 +35,11 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 OutputDir=Output
-OutputBaseFilename=SoftProIt-Network-{#AppVersion}-setup
+OutputBaseFilename=SoftProIt-Network-Service-{#AppVersion}-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-UninstallDisplayIcon={app}\admin\{#AdminExeName}
+UninstallDisplayIcon={app}\conducted\{#SvcExeName}
 UninstallDisplayName={#AppName}
 CloseApplications=no
 SetupLogging=yes
@@ -49,20 +50,16 @@ Name: "{#DataRoot}\config"
 Name: "{#DataRoot}\data"
 Name: "{#DataRoot}\logs"
 
-[Files]
-; The service (onedir) and the admin app (onedir) go into separate subfolders.
-Source: "..\dist\SoftProIt.network.conducted\*"; DestDir: "{app}\conducted"; Flags: recursesubdirs createallsubdirs ignoreversion
-Source: "..\dist\SoftProIt.network.admin\*"; DestDir: "{app}\admin"; Flags: recursesubdirs createallsubdirs ignoreversion
+[InstallDelete]
+; Left over from the former combined installer; the admin app now installs separately.
+Type: filesandordirs; Name: "{app}\admin"
 
-[Icons]
-Name: "{autoprograms}\{#AdminDisplayName}"; Filename: "{app}\admin\{#AdminExeName}"
+[Files]
+Source: "..\dist\SoftProIt.network.conducted\*"; DestDir: "{app}\conducted"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [UninstallRun]
 Filename: "{app}\conducted\{#SvcExeName}"; Parameters: "stop"; Flags: runhidden waituntilterminated; RunOnceId: "StopService"
 Filename: "{app}\conducted\{#SvcExeName}"; Parameters: "uninstall"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveService"
-
-[UninstallDelete]
-Type: files; Name: "{app}\admin\admin.env"
 
 ; ProgramData (policy cache, logs, config) is intentionally kept on uninstall so a
 ; reinstall keeps state. Delete C:\ProgramData\OrganizationNetworkAgent to wipe.
@@ -80,9 +77,9 @@ procedure InitializeWizard();
 begin
   ConfigPage := CreateInputQueryPage(wpSelectTasks,
     'Organization configuration (unattended / org-token mode)',
-    'Connect these computers to your organization''s admin server.',
+    'Connect this computer to your organization''s admin server.',
     'Enter the admin server URL and the organization access token from the admin ' +
-    'console (organization -> Generate access token). ' +
+    'console (Organizations -> Generate token). ' +
     'Leave all fields empty on an upgrade to keep the existing configuration.');
   ConfigPage.Add('Admin server (e.g. https://admin.example.com):', False);
   ConfigPage.Add('Access token (nat_...):', True);
@@ -143,15 +140,10 @@ begin
   Result := ExpandConstant('{app}\conducted\{#SvcExeName}');
 end;
 
-procedure PrepareToInstallStopService();
+function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   RunTool(ExpandConstant('{sys}\sc.exe'), 'stop {#ServiceName}');
   Sleep(3000);
-end;
-
-function PrepareToInstall(var NeedsRestart: Boolean): String;
-begin
-  PrepareToInstallStopService();
   Result := '';
 end;
 
@@ -172,50 +164,11 @@ begin
   RunTool(ExpandConstant('{sys}\icacls.exe'), AddQuotes(App + '\*') + ' /reset /T /C /Q');
 end;
 
-{ ADMIN_SERVER from an existing agent.env (upgrade with empty fields). }
-function ExistingAdminServer(): String;
-var
-  Lines: TArrayOfString;
-  I: Integer;
-  Line: String;
-begin
-  Result := '';
-  if not LoadStringsFromFile(ExpandConstant('{#DataRoot}\config\agent.env'), Lines) then Exit;
-  for I := 0 to GetArrayLength(Lines) - 1 do
-  begin
-    Line := Trim(Lines[I]);
-    if Pos('ADMIN_SERVER=', Line) = 1 then
-    begin
-      Result := Trim(Copy(Line, Length('ADMIN_SERVER=') + 1, MaxInt));
-      StringChangeEx(Result, '"', '', True);
-    end;
-  end;
-end;
-
-{ The admin app runs as a normal user and cannot read agent.env (admin-only, holds the
-  access token), so give it the server URL alone in admin.env next to its executable.
-  The install dir is Users read/execute, so the file inherits that and stays non-writable. }
-procedure WriteAdminEnv(const Url: String);
-var
-  AdminEnv: String;
-begin
-  if Url = '' then Exit;
-  AdminEnv := ExpandConstant('{app}\admin\admin.env');
-  SaveStringToFile(AdminEnv,
-    '# Managed by SoftProIt Network setup. Server URL only; no secrets.' + #13#10 +
-    'ADMIN_SERVER="' + Url + '"' + #13#10, False);
-  Log('wrote ' + AdminEnv);
-end;
-
 procedure WriteConfig();
 var
   EnvFile, Url, Cache, Content: String;
 begin
-  if AllEmpty() and ExistingConfig() then
-  begin
-    WriteAdminEnv(ExistingAdminServer());
-    Exit;
-  end;
+  if AllEmpty() and ExistingConfig() then Exit;
   EnvFile := ExpandConstant('{#DataRoot}\config\agent.env');
   Url := Trim(ConfigPage.Values[0]);
   Cache := Trim(ConfigPage.Values[2]);
@@ -229,7 +182,6 @@ begin
     Content := Content + 'NAM_ALLOW_INSECURE_HTTP="true"' + #13#10;
   SaveStringToFile(EnvFile, Content, False);
   Log('wrote ' + EnvFile);
-  WriteAdminEnv(Url);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
