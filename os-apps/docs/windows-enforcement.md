@@ -1,24 +1,21 @@
 # Windows enforcement
 
-**Network enforcement is not included in this build.** The agent is the control
-plane only: it enrolls, authenticates, heartbeats, downloads and validates policy,
-caches it, and runs the apply/verify/rollback pipeline. It does not intercept DNS,
-add firewall or WFP rules, write browser policies, or touch traffic in any way.
+On Windows the service uses `WindowsEnforcementBackend`
+(`src/nam_agent/enforcement/windows.py`, chosen by `default_backend()`); other platforms still use
+`NotImplementedBackend`. Three layers are installed and removed as one unit:
 
-The only shipped backend is `NotImplementedBackend`
-(`src/nam_agent/enforcement/not_implemented.py`):
+| Layer | What it does | Limits |
+|-------|--------------|--------|
+| Browser enterprise policies (`HKLM\SOFTWARE\Policies`) | Chrome, Edge, Brave, Chromium: `URLBlocklist` / `URLAllowlist` (Allow Only = block `*` + allowlist), `DnsOverHttpsMode=off` (block_doh), `QuicAllowed=0` (block_quic). Firefox: `WebsiteFilter`, DoH off. A blocked page shows the browser's own "blocked by your organization" error in the same tab. | Only with `enforce_browser_policies`. Chromium reloads policies by itself; Firefox on its next start. Browsers without policy support are not covered. |
+| hosts file | Names the policy blocks are sinkholed to `0.0.0.0` for every app (exact names, plus `www.`/`m.` when §5 blocks them); redirect sources point at the target's address. Between `# BEGIN/END SoftProIt Network` markers. | No wildcards; not used in Allow Only mode. HTTPS redirects show a certificate error (no TLS interception). |
+| Windows Firewall (group "SoftProIt Network") | Blocks `blocked_ips` (management addresses carved out), QUIC (UDP 443), DoT (853). | Outbound only. |
 
-| Call | Behaviour |
-|------|-----------|
-| `apply()` | raises `EnforcementError("ENFORCEMENT_NOT_AVAILABLE: ...")` |
-| `verify()` | returns `ok=False` |
-| `remove()` | no-op (nothing was ever installed) |
-| `status()` | `ENFORCEMENT_NOT_AVAILABLE` |
-
-Consequently, when an enabled policy is assigned the agent reports
-`POST /policy/status {status: FAILED, error_code: policy_apply_failed}`, does not
-ack, keeps `current_policy_version = 0`, and heartbeats `ENFORCEMENT_ERROR`. A
-policy with `enabled: false` needs no enforcement and is marked active normally.
+Browsers and tabs are never closed; the DNS cache is flushed after every apply. The management
+server is always allowlisted and never sinkholed or firewalled. Registry values that existed before
+the first apply are backed up to `<data>\enforcement-state.json` and restored by `remove()`. A failed
+apply removes everything (clean state) and raises `EnforcementError`; the pipeline then restores the
+previous policy. Matching follows contract §5 (`youtube.com` covers only that name: list
+`*.youtube.com` too for its subdomains).
 
 ## Interface contract for a future enforcement component
 

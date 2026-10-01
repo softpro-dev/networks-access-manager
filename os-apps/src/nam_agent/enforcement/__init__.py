@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from .base import (
     EnforcementBackend,
     EnforcementError,
@@ -9,8 +11,13 @@ from .base import (
 from .not_implemented import NotImplementedBackend
 
 
-def default_backend() -> EnforcementBackend:
-    """The backend used by the service. Only NotImplementedBackend exists in this build."""
+def default_backend(state_dir: Path | None = None) -> EnforcementBackend:
+    """The backend used by the service: hosts + browser policies + firewall on Windows
+    (enforcement/windows.py); NotImplementedBackend elsewhere (macOS enforcement is not built)."""
+    from .windows import WindowsEnforcementBackend, is_supported
+
+    if is_supported() and state_dir is not None:
+        return WindowsEnforcementBackend(state_dir / "enforcement-state.json")
     return NotImplementedBackend()
 
 

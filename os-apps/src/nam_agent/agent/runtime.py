@@ -42,7 +42,7 @@ def build_runtime(paths: AgentPaths | None = None, backend: EnforcementBackend |
     db = Database(paths.db_path)
     store = SecretStore(db, make_protector(settings.secret_protector, key_dir=paths.config_dir))
     api = AgentApiClient(settings.api_base_url, verify=settings.tls_verify_value, timeout=settings.http_timeout)
-    resolved_backend = backend or default_backend()
+    resolved_backend = backend or default_backend(paths.data_dir)
     if settings.mode == MODE_ORG_TOKEN:
         agent: Any = OrgAgent(OrgAgentDeps(settings=settings, paths=paths, db=db, api=api, backend=resolved_backend))
     else:
