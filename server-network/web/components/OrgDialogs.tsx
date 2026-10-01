@@ -177,54 +177,59 @@ export function RegistrationTokenControls({ org }: { org: Organization }) {
 }
 
 /**
- * Organization service access token (used by SoftProIt.network.conducted). One click generates it,
- * copies it to the clipboard for the installer, and shows it once. Non-expiring; rotate to revoke.
+ * Organization service access token (used by SoftProIt.network.conducted). Generating or rotating
+ * shows the raw token once in a dialog with a Copy button; only its hash is stored, so a lost token
+ * must be rotated. Non-expiring; rotate or clear to revoke.
  */
 export function AccessTokenControls({ org }: { org: Organization }) {
-  const toast = useToast();
-  const qc = useQueryClient();
-  const [confirm, setConfirm] = useState(false);
-  const invalidate = () => {
-    void qc.invalidateQueries({ queryKey: ['organizations'] });
-    void qc.invalidateQueries({ queryKey: ['organization', org.id] });
-  };
+  const [confirm, setConfirm] = useState<'rotate' | 'clear' | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const gen = useAction(() => post<{ access_token: string }>(`/organizations/${org.id}/access-token`), {
     invalidate: [['organizations'], ['organization', org.id]],
-    onSuccess: async (r) => {
-      setConfirm(false);
-      try {
-        await navigator.clipboard.writeText(r.access_token);
-        toast('Access token copied — paste it into the agent installer (ACCESS_TOKE). Shown once.', 'success');
-      } catch {
-        toast(`Access token (copy now, shown once): ${r.access_token}`, 'info');
-      }
+    onSuccess: (r) => {
+      setConfirm(null);
+      setToken(r.access_token);
     },
   });
   const clear = useAction(() => del<Organization>(`/organizations/${org.id}/access-token`), {
     success: 'Access token cleared',
     invalidate: [['organizations'], ['organization', org.id]],
-    onSuccess: invalidate,
+    onSuccess: () => setConfirm(null),
   });
   return (
     <>
       <div className="btn-row">
-        <Button size="sm" busy={gen.isPending} onClick={() => (org.has_access_token ? setConfirm(true) : gen.mutate(undefined))}>
+        <Button
+          size="sm"
+          busy={gen.isPending}
+          onClick={() => {
+            if (!org.has_access_token) return gen.mutate(undefined);
+            gen.reset();
+            setConfirm('rotate');
+          }}
+        >
           {org.has_access_token ? 'Rotate access token' : 'Generate access token'}
         </Button>
         {org.has_access_token && (
-          <Button size="sm" busy={clear.isPending} onClick={() => clear.mutate(undefined)}>
+          <Button
+            size="sm"
+            onClick={() => {
+              clear.reset();
+              setConfirm('clear');
+            }}
+          >
             Clear
           </Button>
         )}
       </div>
       <ConfirmDialog
-        open={confirm}
+        open={confirm === 'rotate'}
         title="Rotate access token"
         confirmLabel="Rotate"
         destructive
         busy={gen.isPending}
         error={gen.error}
-        onClose={() => setConfirm(false)}
+        onClose={() => setConfirm(null)}
         onConfirm={() => gen.mutate(undefined)}
       >
         <p>
@@ -232,6 +237,34 @@ export function AccessTokenControls({ org }: { org: Organization }) {
           stops working immediately, so every already-installed service must be reconfigured with the new token.
         </p>
       </ConfirmDialog>
+      <ConfirmDialog
+        open={confirm === 'clear'}
+        title="Clear access token"
+        confirmLabel="Clear token"
+        destructive
+        busy={clear.isPending}
+        error={clear.error}
+        onClose={() => setConfirm(null)}
+        onConfirm={() => clear.mutate(undefined)}
+      >
+        <p>
+          Remove the service access token for <strong>{org.code}</strong>? It stops working immediately: every installed
+          service using it can no longer fetch policy updates and keeps enforcing its last cached policy until it is
+          reconfigured with a new token.
+        </p>
+      </ConfirmDialog>
+      <Modal open={!!token} onClose={() => setToken(null)} title="Access token" footer={<Button variant="primary" onClick={() => setToken(null)}>I have stored it</Button>}>
+        <div className="stack">
+          <Alert tone="warn" title="Copy it now">
+            This token is shown only once and cannot be retrieved later. Paste it into the agent installer (access token /
+            ACCESS_TOKE). Anyone with it can read this organization&apos;s policy. If it is lost, rotate it.
+          </Alert>
+          <div className="secret-box">
+            <code className="mono secret">{token}</code>
+            {token && <CopyButton value={token} />}
+          </div>
+        </div>
+      </Modal>
     </>
   );
 }

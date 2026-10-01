@@ -61,6 +61,9 @@ Name: "{autoprograms}\{#AdminDisplayName}"; Filename: "{app}\admin\{#AdminExeNam
 Filename: "{app}\conducted\{#SvcExeName}"; Parameters: "stop"; Flags: runhidden waituntilterminated; RunOnceId: "StopService"
 Filename: "{app}\conducted\{#SvcExeName}"; Parameters: "uninstall"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveService"
 
+[UninstallDelete]
+Type: files; Name: "{app}\admin\admin.env"
+
 ; ProgramData (policy cache, logs, config) is intentionally kept on uninstall so a
 ; reinstall keeps state. Delete C:\ProgramData\OrganizationNetworkAgent to wipe.
 
@@ -169,11 +172,50 @@ begin
   RunTool(ExpandConstant('{sys}\icacls.exe'), AddQuotes(App + '\*') + ' /reset /T /C /Q');
 end;
 
+{ ADMIN_SERVER from an existing agent.env (upgrade with empty fields). }
+function ExistingAdminServer(): String;
+var
+  Lines: TArrayOfString;
+  I: Integer;
+  Line: String;
+begin
+  Result := '';
+  if not LoadStringsFromFile(ExpandConstant('{#DataRoot}\config\agent.env'), Lines) then Exit;
+  for I := 0 to GetArrayLength(Lines) - 1 do
+  begin
+    Line := Trim(Lines[I]);
+    if Pos('ADMIN_SERVER=', Line) = 1 then
+    begin
+      Result := Trim(Copy(Line, Length('ADMIN_SERVER=') + 1, MaxInt));
+      StringChangeEx(Result, '"', '', True);
+    end;
+  end;
+end;
+
+{ The admin app runs as a normal user and cannot read agent.env (admin-only, holds the
+  access token), so give it the server URL alone in admin.env next to its executable.
+  The install dir is Users read/execute, so the file inherits that and stays non-writable. }
+procedure WriteAdminEnv(const Url: String);
+var
+  AdminEnv: String;
+begin
+  if Url = '' then Exit;
+  AdminEnv := ExpandConstant('{app}\admin\admin.env');
+  SaveStringToFile(AdminEnv,
+    '# Managed by SoftProIt Network setup. Server URL only; no secrets.' + #13#10 +
+    'ADMIN_SERVER="' + Url + '"' + #13#10, False);
+  Log('wrote ' + AdminEnv);
+end;
+
 procedure WriteConfig();
 var
   EnvFile, Url, Cache, Content: String;
 begin
-  if AllEmpty() and ExistingConfig() then Exit;
+  if AllEmpty() and ExistingConfig() then
+  begin
+    WriteAdminEnv(ExistingAdminServer());
+    Exit;
+  end;
   EnvFile := ExpandConstant('{#DataRoot}\config\agent.env');
   Url := Trim(ConfigPage.Values[0]);
   Cache := Trim(ConfigPage.Values[2]);
@@ -187,6 +229,7 @@ begin
     Content := Content + 'NAM_ALLOW_INSECURE_HTTP="true"' + #13#10;
   SaveStringToFile(EnvFile, Content, False);
   Log('wrote ' + EnvFile);
+  WriteAdminEnv(Url);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

@@ -1,8 +1,9 @@
 """Configuration and URL resolution for the admin desktop wrapper.
 
 Pure, headless-safe logic (no pywebview import) so it can be unit-tested without a
-display. Reads ADMIN_SERVER from the same sources as the service: process
-environment first, then the agent's `agent.env` in the data directory. If only
+display. Reads ADMIN_SERVER from the process environment, then `admin.env` next to
+the executable (written by the installer, user-readable), then the agent's
+`agent.env` in the data directory (admin-only on Windows; skipped if unreadable). If only
 API_BASE_URL is present, ADMIN_SERVER is derived from it by removing the trailing
 `/api`.
 """
@@ -20,6 +21,7 @@ from . import ADMIN_VERSION, APP_NAME
 
 PRODUCT_DIR_NAME = "OrganizationNetworkAgent"
 DEFAULT_API_SUFFIX = "/api"
+ADMIN_ENV_NAME = "admin.env"
 
 
 class AdminConfigError(RuntimeError):
@@ -59,13 +61,36 @@ def _derive_from_api_base(api_base_url: str) -> str | None:
     return base.rstrip("/") or None
 
 
+def default_admin_env_file() -> Path | None:
+    """`admin.env` next to the frozen executable. The Windows installer writes it with
+    ADMIN_SERVER only, readable by Users — unlike agent.env, whose ProgramData ACL keeps
+    the access token away from non-admins."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / ADMIN_ENV_NAME
+    return None
+
+
+def _read_env_file(path: str | Path | None) -> dict[str, str]:
+    """Values from a dotenv file; empty when missing or unreadable (e.g. agent.env is
+    SYSTEM/Administrators-only and the admin app runs as a normal user)."""
+    if path is None:
+        return {}
+    try:
+        if not Path(path).is_file():
+            return {}
+        return {k: v for k, v in dotenv_values(path).items() if v is not None}
+    except OSError:
+        return {}
+
+
 def resolve_admin_server(
     environ: dict[str, str] | None = None,
     env_file: str | Path | None = None,
+    admin_env_file: str | Path | None = None,
 ) -> str | None:
     """Resolve the admin console base URL, or None when unconfigured.
 
-    Precedence: ADMIN_SERVER (env) > ADMIN_SERVER (agent.env) >
+    Precedence: ADMIN_SERVER (env) > ADMIN_SERVER (admin.env) > ADMIN_SERVER (agent.env) >
     API_BASE_URL-derived (agent.env) > API_BASE_URL-derived (env).
     """
     import os
@@ -76,17 +101,22 @@ def resolve_admin_server(
     if val:
         return val
 
+    if admin_env_file is None:
+        admin_env_file = default_admin_env_file()
+    val = _clean_base(_read_env_file(admin_env_file).get("ADMIN_SERVER", ""))
+    if val:
+        return val
+
     if env_file is None:
         root = default_data_root(environ)
         env_file = (root / "config" / "agent.env") if root is not None else None
-    if env_file is not None and Path(env_file).is_file():
-        values = {k: v for k, v in dotenv_values(env_file).items() if v is not None}
-        val = _clean_base(values.get("ADMIN_SERVER", ""))
-        if val:
-            return val
-        derived = _derive_from_api_base(values.get("API_BASE_URL", ""))
-        if derived:
-            return derived
+    values = _read_env_file(env_file)
+    val = _clean_base(values.get("ADMIN_SERVER", ""))
+    if val:
+        return val
+    derived = _derive_from_api_base(values.get("API_BASE_URL", ""))
+    if derived:
+        return derived
 
     return _derive_from_api_base(environ.get("API_BASE_URL", ""))
 
