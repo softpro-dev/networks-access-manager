@@ -22,7 +22,7 @@ param(
   [string]$Version = "",
   [switch]$SkipTests,
   [switch]$Installer,
-  [string]$Python = "py -3"
+  [string]$Python = ""   # override the base interpreter, e.g. "py -3.12" or C:\Python312\python.exe
 )
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
@@ -50,14 +50,45 @@ $apps = @(
 ) | Where-Object { $Target -eq "All" -or $_.Name -eq $Target }
 Write-Host "Building $($apps.Name -join ' + ') version $BuildVersion"
 
-$venv = Join-Path $Root ".venv"
-if (-not (Test-Path $venv)) {
-  Write-Host "Creating virtual environment..."
-  Invoke-Expression "$Python -m venv `"$venv`""
+# True when the command (exe + leading args) runs as 64-bit Python 3.11+.
+function Test-Python([string[]]$Cmd) {
+  if (-not $Cmd -or -not $Cmd[0]) { return $false }
+  $exe = $Cmd[0]
+  $pre = @($Cmd | Select-Object -Skip 1)
+  if (-not (Get-Command $exe -ErrorAction SilentlyContinue)) { return $false }
+  try {
+    & $exe @pre -c "import struct,sys; sys.exit(0 if sys.version_info >= (3, 11) and struct.calcsize('P') == 8 else 1)" 2>$null | Out-Null
+    return $LASTEXITCODE -eq 0
+  } catch { return $false }
 }
+
+# A 64-bit Python 3.11+ to create the venv with: -Python, else the py launcher, else python on PATH.
+function Find-BasePython {
+  $candidates = @()
+  if ($Python) { $candidates += , ($Python -split '\s+' | Where-Object { $_ }) }
+  $candidates += , @("py", "-3.13"); $candidates += , @("py", "-3.12"); $candidates += , @("py", "-3.11"); $candidates += , @("py", "-3")
+  $candidates += , @("python"); $candidates += , @("python3")
+  $candidates += , @("$env:LOCALAPPDATA\Programs\Python\Python313\python.exe")
+  $candidates += , @("$env:LOCALAPPDATA\Programs\Python\Python312\python.exe")
+  $candidates += , @("$env:LOCALAPPDATA\Programs\Python\Python311\python.exe")
+  foreach ($c in $candidates) { if (Test-Python $c) { return , $c } }
+  return $null
+}
+
+$venv = Join-Path $Root ".venv"
 $py = Join-Path $venv "Scripts\python.exe"
-& $py -c "import struct,sys; assert struct.calcsize('P')==8, '64-bit Python required'; print(sys.version)"
-if ($LASTEXITCODE -ne 0) { throw "64-bit Python required" }
+if (-not (Test-Python @($py))) {
+  # Missing, broken, or created on another OS (a macOS venv has bin/, not Scripts\).
+  $base = Find-BasePython
+  if (-not $base) { throw "64-bit Python 3.11+ not found. Install it (winget install Python.Python.3.12) or pass -Python <path>." }
+  if (Test-Path $venv) { Write-Host "Recreating .venv (no usable Python 3.11+ inside)..."; Remove-Item -Recurse -Force $venv }
+  else { Write-Host "Creating .venv..." }
+  $baseExe = $base[0]
+  $baseArgs = @($base | Select-Object -Skip 1)
+  & $baseExe @baseArgs -m venv $venv
+  if ($LASTEXITCODE -ne 0 -or -not (Test-Python @($py))) { throw "creating .venv failed" }
+}
+& $py -c "import sys; print('Using', sys.executable, sys.version.split()[0])"
 
 & $py -m pip install --upgrade pip
 & $py -m pip install -r requirements-dev.txt

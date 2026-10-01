@@ -50,11 +50,44 @@ fi
 want() { [ "$TARGET" = all ] || [ "$TARGET" = "$1" ]; }
 echo "Building $TARGET version $VERSION"
 
-if [ ! -d .venv ]; then
-  echo "Creating virtual environment..."
-  python3 -m venv .venv
+# Finder-launched Terminals may lack Homebrew paths; keep the user's PATH first.
+export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
+
+# True when $1 runs and is Python 3.11+.
+is_py311() { [ -n "$1" ] && "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; }
+
+# The venv's interpreter for this OS layout (bin/ on macOS/Linux, Scripts/ on Windows), if usable.
+venv_python() {
+  local p
+  for p in "$ROOT/.venv/bin/python3" "$ROOT/.venv/bin/python" "$ROOT/.venv/Scripts/python.exe"; do
+    if is_py311 "$p"; then echo "$p"; return 0; fi
+  done
+  return 1
+}
+
+# A Python 3.11+ to create the venv with: $PYTHON, else the newest python3.x on PATH.
+base_python() {
+  local c
+  for c in "${PYTHON:-}" python3.13 python3.12 python3.11 python3 python; do
+    [ -n "$c" ] || continue
+    c="$(command -v "$c" 2>/dev/null)" || continue
+    if is_py311 "$c"; then echo "$c"; return 0; fi
+  done
+  return 1
+}
+
+if ! PY="$(venv_python)"; then
+  # Missing, broken (e.g. left behind when .venv stopped being tracked in git) or from another OS.
+  BASE="$(base_python)" || {
+    echo "Python 3.11+ not found. Install it (e.g. 'brew install python@3.12') or set PYTHON=/path/to/python3." >&2
+    exit 1
+  }
+  if [ -e .venv ]; then echo "Recreating .venv (no usable Python 3.11+ inside)..."; else echo "Creating .venv..."; fi
+  rm -rf .venv
+  "$BASE" -m venv .venv
+  PY="$(venv_python)" || { echo "Created .venv but its interpreter does not run." >&2; exit 1; }
 fi
-PY="$ROOT/.venv/bin/python"
+echo "Using $PY ($("$PY" -c 'import sys; print(sys.version.split()[0])'))"
 "$PY" -m pip install --upgrade pip
 "$PY" -m pip install -r requirements-dev.txt
 
