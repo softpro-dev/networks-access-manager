@@ -118,3 +118,15 @@ def test_macos_default_root(monkeypatch):
     monkeypatch.setattr("nam_agent.config.paths.IS_MACOS", True)
     root = default_root({})
     assert root.as_posix() == "/Library/Application Support/OrganizationNetworkAgent"
+
+
+def test_test_poll_seconds_overrides_the_minutes_only_when_set(tmp_path):
+    s, _ = load_settings(paths(tmp_path), {**BASE, "CACHE_EXPIRATION_TIME_IN_MINUTE": "5"})
+    assert s.test_poll_seconds is None and s.cache_expiration_seconds == 300
+    s, _ = load_settings(paths(tmp_path), {**BASE, "CACHE_EXPIRATION_TIME_IN_MINUTE": "5", "NAM_TEST_POLL_SECONDS": "10"})
+    assert s.cache_expiration_seconds == 10
+    s, _ = load_settings(paths(tmp_path), {**BASE, "NAM_TEST_POLL_SECONDS": ""})
+    assert s.test_poll_seconds is None  # empty = not set
+    for bad in ("0", "4", "3601", "0.5"):
+        with pytest.raises(ConfigError):
+            load_settings(paths(tmp_path), {**BASE, "NAM_TEST_POLL_SECONDS": bad})

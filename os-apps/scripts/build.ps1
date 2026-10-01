@@ -54,6 +54,13 @@ $CfgToken = Get-EnvValue "ACCESS_TOKE"
 $CfgCache = Get-EnvValue "CACHE_EXPIRATION_TIME_IN_MINUTE"
 if (-not $CfgCache) { $CfgCache = "5" }
 $CfgCode = Get-EnvValue "CODE_NUMBER"   # display only: identifies the build on the setup screen
+$CfgTestPoll = Get-EnvValue "NAM_TEST_POLL_SECONDS"   # testing only: poll every N seconds
+if ($CfgTestPoll -and ($CfgTestPoll -notmatch '^\d+$' -or [int]$CfgTestPoll -lt 5 -or [int]$CfgTestPoll -gt 3600)) {
+  throw "NAM_TEST_POLL_SECONDS in os-apps\.env must be 5-3600 seconds, or empty (got '$CfgTestPoll')"
+}
+if ($CfgTestPoll -and $Target -ne "Admin") {
+  Write-Warning "TEST BUILD: the service will poll every $CfgTestPoll s (NAM_TEST_POLL_SECONDS). Remove it from os-apps\.env before building for real PCs."
+}
 if ($Installer) {
   if ($CfgCode -match '["'']' -or $CfgCode.Length -gt 64) { throw "CODE_NUMBER in os-apps\.env must be at most 64 characters, without quotes" }
   if ($CfgServer -notmatch '^https?://[^\s"'']+$') { throw "ADMIN_SERVER in os-apps\.env must be an http(s):// URL (got '$CfgServer')" }
@@ -157,7 +164,7 @@ if ($Installer) {
       "#define CfgCode `"$CfgCode`""
     )
     Set-Content -Encoding UTF8 $adminCfg $shared
-    Set-Content -Encoding UTF8 $serviceCfg ($shared + "#define CfgToken `"$CfgToken`"")
+    Set-Content -Encoding UTF8 $serviceCfg ($shared + "#define CfgToken `"$CfgToken`"" + "#define CfgTestPoll `"$CfgTestPoll`"")
     foreach ($app in $apps) {
       & $iscc /Q "/DAppVersion=$BuildVersion" $app.Iss
       if ($LASTEXITCODE -ne 0) { throw "ISCC ($($app.Name)) failed" }

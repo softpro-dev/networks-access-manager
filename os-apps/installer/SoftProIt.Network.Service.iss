@@ -19,6 +19,9 @@
 #ifndef CfgServer
   #error build\installer-config-service.iss must define CfgServer, CfgToken and CfgCache (run scripts\build.ps1)
 #endif
+#ifndef CfgTestPoll
+  #define CfgTestPoll ""
+#endif
 #define AppName "SoftProIt Network Service"
 #define ServiceName "OrganizationNetworkAgent"
 #define SvcExeName "SoftProIt.network.conducted.exe"
@@ -109,6 +112,15 @@ begin
   if Result = '' then Result := '(not set)';
 end;
 
+{ Testing builds (NAM_TEST_POLL_SECONDS in os-apps\.env) say so loudly on the Ready page. }
+function TestPollNotice(NewLine: String): String;
+begin
+  Result := '';
+  if '{#CfgTestPoll}' <> '' then
+    Result := 'TEST BUILD: checks for restrictions every {#CfgTestPoll} seconds (NAM_TEST_POLL_SECONDS).' +
+      NewLine + 'Do not install on production computers.' + NewLine + NewLine;
+end;
+
 { Ready page: identify this build (read-only; nothing to enter). }
 function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo,
   MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
@@ -118,6 +130,7 @@ begin
     Space + 'CACHE_EXPIRATION_TIME_IN_MINUTE:  ' + CacheValue() + NewLine +
     Space + 'CODE_NUMBER:                      ' + CodeValue() + NewLine +
     Space + 'BUILD_VERSION:                    ' + '{#AppVersion}' + NewLine + NewLine +
+    TestPollNotice(NewLine) +
     MemoDirInfo;
 end;
 
@@ -178,6 +191,9 @@ begin
   Content := Content + 'ADMIN_SERVER="' + Url + '"' + #13#10;
   Content := Content + 'ACCESS_TOKE="' + TokenValue() + '"' + #13#10;
   Content := Content + 'CACHE_EXPIRATION_TIME_IN_MINUTE="' + Cache + '"' + #13#10;
+  { Testing only: seconds-level polling, baked in from os-apps\.env when set there. }
+  if '{#CfgTestPoll}' <> '' then
+    Content := Content + 'NAM_TEST_POLL_SECONDS="{#CfgTestPoll}"' + #13#10;
   { Permit http:// for non-TLS admin servers (e.g. on-prem); https needs no flag. }
   if Pos('https://', Lowercase(Url)) <> 1 then
     Content := Content + 'NAM_ALLOW_INSECURE_HTTP="true"' + #13#10;

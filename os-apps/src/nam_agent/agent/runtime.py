@@ -37,6 +37,12 @@ def build_runtime(paths: AgentPaths | None = None, backend: EnforcementBackend |
     paths = paths or resolve_paths()
     paths.ensure()
     settings, source = load_settings(paths)
+    if settings.test_poll_seconds:
+        logging.getLogger(__name__).warning(
+            "TEST MODE: polling every %ss (NAM_TEST_POLL_SECONDS) instead of every %s min; not for production",
+            settings.test_poll_seconds,
+            settings.cache_expiration_minutes,
+        )
     if not settings.verify_tls:
         logging.getLogger(__name__).warning("TLS certificate verification is DISABLED (VERIFY_TLS=false); not for production")
     db = Database(paths.db_path)

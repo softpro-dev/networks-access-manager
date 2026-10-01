@@ -56,6 +56,13 @@ CFG_TOKEN="${ACCESS_TOKE:-$(env_value ACCESS_TOKE)}"
 CFG_CACHE="${CACHE_EXPIRATION_TIME_IN_MINUTE:-$(env_value CACHE_EXPIRATION_TIME_IN_MINUTE)}"
 CFG_CACHE="${CFG_CACHE:-5}"
 CFG_CODE="${CODE_NUMBER:-$(env_value CODE_NUMBER)}"   # display only: identifies the build
+CFG_TEST_POLL="${NAM_TEST_POLL_SECONDS:-$(env_value NAM_TEST_POLL_SECONDS)}"   # testing only: poll every N s
+if [ -n "$CFG_TEST_POLL" ]; then
+  if ! [[ "$CFG_TEST_POLL" =~ ^[0-9]+$ ]] || [ "$CFG_TEST_POLL" -lt 5 ] || [ "$CFG_TEST_POLL" -gt 3600 ]; then
+    echo "NAM_TEST_POLL_SECONDS in os-apps/.env must be 5-3600 seconds, or empty (got '$CFG_TEST_POLL')" >&2; exit 2
+  fi
+  echo "WARNING: TEST BUILD - the service will poll every ${CFG_TEST_POLL}s (NAM_TEST_POLL_SECONDS). Remove it before building for real Macs." >&2
+fi
 # What installers show: the server only by its first 10 characters, never the token.
 CFG_SERVER_SHORT="$CFG_SERVER"
 [ "${#CFG_SERVER}" -gt 10 ] && CFG_SERVER_SHORT="${CFG_SERVER:0:10}..."
@@ -65,6 +72,9 @@ settings_text() { # $1 = heading
   printf '  CACHE_EXPIRATION_TIME_IN_MINUTE:  %s\n' "$CFG_CACHE"
   printf '  CODE_NUMBER:                      %s\n' "${CFG_CODE:-(not set)}"
   printf '  BUILD_VERSION:                    %s\n\n' "$VERSION"
+  if [ -n "$CFG_TEST_POLL" ]; then
+    printf 'TEST BUILD: checks for restrictions every %s seconds (NAM_TEST_POLL_SECONDS).\nDo not install on production computers.\n\n' "$CFG_TEST_POLL"
+  fi
 }
 if [ "$MAKE_DMG" = 1 ]; then
   if [ "${#CFG_CODE}" -gt 64 ] || [[ "$CFG_CODE" == *[\"\']* ]]; then
@@ -202,7 +212,7 @@ if want service; then
   # Baked-in config the postinstall writes to agent.env (no questions at install time).
   # Lives in the .pkg's scripts, readable only by root when the package runs.
   ( umask 077
-    printf 'CFG_SERVER=%q\nCFG_TOKEN=%q\nCFG_CACHE=%q\n' "$CFG_SERVER" "$CFG_TOKEN" "$CFG_CACHE" > "$STAGE/scripts/config.env" )
+    printf 'CFG_SERVER=%q\nCFG_TOKEN=%q\nCFG_CACHE=%q\nCFG_TEST_POLL=%q\n' "$CFG_SERVER" "$CFG_TOKEN" "$CFG_CACHE" "$CFG_TEST_POLL" > "$STAGE/scripts/config.env" )
   echo "Baked in: ADMIN_SERVER=$CFG_SERVER, CACHE_EXPIRATION_TIME_IN_MINUTE=$CFG_CACHE, ACCESS_TOKE=nat_..."
 
   step "Building service .pkg (pkgbuild)"

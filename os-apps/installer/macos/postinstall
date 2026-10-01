@@ -21,7 +21,7 @@ mkdir -p "$DATA/config" "$DATA/data" "$DATA/logs"
 chown -R root:wheel "$DATA"
 chmod -R go-rwx "$DATA"
 
-CFG_SERVER="" CFG_TOKEN="" CFG_CACHE=5
+CFG_SERVER="" CFG_TOKEN="" CFG_CACHE=5 CFG_TEST_POLL=""
 # shellcheck source=/dev/null
 [ -f "$(dirname "$0")/config.env" ] && . "$(dirname "$0")/config.env"
 if [ -z "$CFG_SERVER" ] || [ -z "$CFG_TOKEN" ]; then
@@ -35,6 +35,7 @@ umask 077
   echo "ADMIN_SERVER=\"$CFG_SERVER\""
   echo "ACCESS_TOKE=\"$CFG_TOKEN\""
   echo "CACHE_EXPIRATION_TIME_IN_MINUTE=\"$CFG_CACHE\""
+  [ -n "${CFG_TEST_POLL:-}" ] && echo "NAM_TEST_POLL_SECONDS=\"$CFG_TEST_POLL\""   # testing builds only
   echo "NAM_SECRET_PROTECTOR=\"file-key\""
   case "$CFG_SERVER" in https://*) ;; *) echo "NAM_ALLOW_INSECURE_HTTP=\"true\"" ;; esac
 } > "$ENV_FILE"
