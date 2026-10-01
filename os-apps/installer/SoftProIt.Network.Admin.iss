@@ -5,7 +5,7 @@
 ; writes it to admin.env next to the exe (no secrets). The service has its own installer:
 ; SoftProIt.Network.Service.iss.
 ;
-; Build: scripts\build.ps1 -Target Admin -Installer   (or how-to\build-admin-setup.bat)
+; Build: scripts\build.ps1 -Target Admin -Installer   (or build-now\build-admin-setup.bat)
 ;   ISCC.exe /DAppVersion=1.2.3 installer\SoftProIt.Network.Admin.iss
 ;
 ; Silent install:

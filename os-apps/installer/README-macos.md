@@ -10,9 +10,9 @@ verified end-to-end on macOS in this build — treat it as buildable-and-documen
 
 Double-click on the Mac (Finder opens Terminal):
 
-- `how-to/build-admin-dmg.command` → `SoftProIt-Network-Admin-<ver>.dmg` (drag the app to
+- `build-now/build-admin-dmg.command` → `SoftProIt-Network-Admin-<ver>.dmg` (drag the app to
   Applications; the admin server URL from `os-apps/.env` is embedded, no secrets)
-- `how-to/build-service-dmg.command` → `SoftProIt-Network-Service-<ver>.dmg` (contains
+- `build-now/build-service-dmg.command` → `SoftProIt-Network-Service-<ver>.dmg` (contains
   `Install SoftProIt Network Service.pkg`; it installs the daemon as root, asks for the server URL
   and access token, writes `agent.env`, and starts the LaunchDaemon — see `installer/macos/`)
 

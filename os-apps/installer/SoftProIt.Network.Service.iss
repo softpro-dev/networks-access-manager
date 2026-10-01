@@ -5,7 +5,7 @@
 ; org-token settings and writes them to the config the service reads (agent.env).
 ; The desktop admin app has its own installer: SoftProIt.Network.Admin.iss.
 ;
-; Build: scripts\build.ps1 -Target Service -Installer   (or how-to\build-service-setup.bat)
+; Build: scripts\build.ps1 -Target Service -Installer   (or build-now\build-service-setup.bat)
 ;   ISCC.exe /DAppVersion=1.2.3 installer\SoftProIt.Network.Service.iss
 ;
 ; Silent install:

@@ -15,7 +15,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Target Service -Inst
 # -> installer\Output\SoftProIt-Network-Admin-<ver>-setup.exe    (administrators' PCs)
 ```
 
-Or double-click `how-to\build-service-setup.bat` / `how-to\build-admin-setup.bat`.
+Or double-click `build-now\build-service-setup.bat` / `build-now\build-admin-setup.bat`.
 `<ver>` is `-Version`, else `BUILD_VERSION` (environment, then `os-apps\.env`), else 1.0.0.
 
 `build.ps1` creates `.venv`, installs `requirements-dev.txt` (includes pywin32 and
