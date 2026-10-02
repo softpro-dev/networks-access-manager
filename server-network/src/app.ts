@@ -1,4 +1,4 @@
-import Fastify, { type FastifyError, type FastifyInstance, type FastifyServerOptions } from 'fastify';
+import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply, type FastifyRequest, type FastifyServerOptions } from 'fastify';
 import helmet from '@fastify/helmet';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
@@ -15,6 +15,8 @@ export interface AppDeps {
   prisma: PrismaClient;
   /** Extra Fastify options (e.g. `https` from server.ts). */
   fastifyOptions?: Partial<FastifyServerOptions> & Record<string, unknown>;
+  /** Optional handler for non-API requests (the production entry point uses Next.js). */
+  notFoundHandler?: (req: FastifyRequest, reply: FastifyReply) => unknown;
 }
 
 export const REDACT_PATHS = [
@@ -58,9 +60,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // Limiters are created explicitly per route (see services/rateLimit.ts); no global limit.
   await app.register(rateLimit, { global: false });
 
-  app.setNotFoundHandler((_req, reply) => {
-    reply.code(404).send(errorBody('NOT_FOUND', 'Route not found'));
-  });
+  app.setNotFoundHandler(deps.notFoundHandler ?? ((_req, reply) => reply.code(404).send(errorBody('NOT_FOUND', 'Route not found'))));
 
   app.setErrorHandler((err: FastifyError | AppError | Error, req, reply) => {
     if (err instanceof AppError) {

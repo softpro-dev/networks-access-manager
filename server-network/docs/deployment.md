@@ -9,14 +9,12 @@ set `TLS_CERT_PATH`/`TLS_KEY_PATH` for native HTTPS (TLS ≥ 1.2). TLS is mandat
 ## Build & release
 
 ```bash
-npm ci && npx prisma generate && npm run build
-NODE_ENV=production npx prisma migrate deploy
-node dist/src/server.js                     # API
-npx next start web --port 3001              # admin console (or `npm start` for both)
+npm ci && npx prisma generate && ENV_FILE=.env.prod npm run build
+ENV_FILE=.env.prod npx prisma migrate deploy
+ENV_FILE=.env.prod npm start                 # console at / and API at /api/* on PORT
 ```
-Set `API_URL` (e.g. `http://127.0.0.1:3000`) before `npm run build:web`: the console's `/api` proxy
-target is fixed at build time. Set `WEB_PUBLIC_URL` on the API to the console's public URL.
-Route the console host (or `/`) to port 3001 and `/api/` to 3000 (or let the console proxy `/api`).
+The Fastify listener owns `/api/*` and sends every other request to the embedded Next.js console.
+Set `PORT` and `WEB_PUBLIC_URL` to the same public service. No `WEB_PORT` or `API_URL` is used.
 Production requires `JWT_SECRET` ≥ 32 chars and a non-trivial `AGENT_REGISTRATION_TOKEN`
 (≥ 16 chars, or empty to require per-organization tokens); startup fails otherwise.
 
@@ -30,8 +28,8 @@ server {
   ssl_certificate_key /etc/letsencrypt/live/management.example.com/privkey.pem;
   ssl_protocols TLSv1.2 TLSv1.3;
   client_max_body_size 8m;
-  location /api/ {
-    proxy_pass http://127.0.0.1:3000;
+  location / {
+    proxy_pass http://127.0.0.1:60100;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto https;
@@ -44,7 +42,7 @@ with `TRUST_PROXY=127.0.0.1`.
 
 ```
 management.example.com {
-  reverse_proxy 127.0.0.1:3000
+  reverse_proxy 127.0.0.1:60100
 }
 ```
 
@@ -61,7 +59,7 @@ User=nam
 Group=nam
 WorkingDirectory=/opt/server-network
 EnvironmentFile=/etc/server-network/env
-ExecStart=/usr/bin/node dist/src/server.js
+ExecStart=/usr/bin/node --env-file=.env.prod dist/src/server.js
 Restart=on-failure
 NoNewPrivileges=true
 ProtectSystem=strict

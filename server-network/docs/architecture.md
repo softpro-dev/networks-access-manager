@@ -1,24 +1,20 @@
 # Architecture
 
 ```
- Admin browser ──▶ web/ (Next.js, :3001) ── rewrites /api/* ──┐
- Admin CLI ────────────────────────────────HTTPS──────────────┤
-                                                              ▼
-                                ┌──────────── server-network ────────────┐ ◀──HTTPS── Windows agents
-   JWT (1 day) + Session row    │ Fastify                                │   ndc_ device credential
-                                │  ├─ /api/auth, /api/organizations, ... │
-                                │  ├─ /api/agent/*  (wire contract)      │
-                                │  └─ error handler → {"error":{...}}    │
-                                │ services/ domain/ (pure)               │
-                                │ Prisma ─────────▶ MySQL 8              │
-                                └────────────────────────────────────────┘
+ Admin browser ─┐
+ Admin CLI ─────┼──HTTPS──▶ server-network (:PORT) ──▶ MySQL 8
+ Windows agents ┘             ├─ Next.js: / and all non-API routes
+                               └─ Fastify: /api/*
+                                    ├─ /api/auth, /api/organizations, ...
+                                    └─ /api/agent/*
 ```
 
 * **Admin console** (`web/`): Next.js App Router, all pages are client components using TanStack Query
-  against same-origin `/api/*`, which Next proxies to Fastify (`API_URL`). No business logic, API routes
-  or server actions live in Next; RBAC and tenant isolation are enforced only (and always) by the API.
+  against same-origin `/api/*`. Fastify handles that namespace directly and passes every non-API request
+  to Next on the same listener. No business logic, API routes or server actions live in Next; RBAC and
+  tenant isolation are enforced only (and always) by the API.
   `middleware.ts` sets a per-request nonce CSP; `next.config.mjs` adds the static security headers.
-  Fastify serves only `/api/*` plus a tiny HTML pointer at `/` (`WEB_PUBLIC_URL`).
+  `WEB_PUBLIC_URL` is the public URL of the shared listener.
   Pages: Dashboard (`/`, analytics), Computers (`/computers`, `/computers/:id`, groups tab and
   `/computers/groups/:id`), Restrictions (`/restrictions`, `/new`, `/:id`), Set access (`/access`, drag and
   drop with `@dnd-kit/core`, optimistic assignment updates), Audit log, Organization(s), Administrators.

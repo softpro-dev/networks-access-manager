@@ -1,27 +1,5 @@
-// Next.js admin console. Fastify (../src) is the only backend: the browser talks to /api/* on this
-// origin and Next proxies it to API_URL. No Next API routes / server actions hold business logic.
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { parseEnv } from 'node:util';
-
-const here = dirname(fileURLToPath(import.meta.url));
-const root = join(here, '..');
-
-/** Read ONLY the port/API URL from ../.env (the server's secrets never enter the Next process env). */
-function serverEnv() {
-  const file = join(root, '.env');
-  if (!existsSync(file)) return {};
-  try {
-    const parsed = parseEnv(readFileSync(file, 'utf8'));
-    return { PORT: parsed.PORT, API_URL: parsed.API_URL };
-  } catch {
-    return {};
-  }
-}
-
-const fileEnv = serverEnv();
-const apiUrl = (process.env.API_URL || fileEnv.API_URL || `http://localhost:${process.env.API_PORT || fileEnv.PORT || 3000}`).replace(/\/+$/, '');
+// Fastify hosts this console in the same process. It handles /api/* and forwards every
+// non-API request to Next; no rewrite or second listener is needed.
 
 /** Static security headers for every console response (the CSP itself is set per request in middleware.ts). */
 const securityHeaders = [
@@ -36,11 +14,8 @@ const securityHeaders = [
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  outputFileTracingRoot: root,
+  outputFileTracingRoot: new URL('..', import.meta.url).pathname,
   eslint: { ignoreDuringBuilds: true },
-  async rewrites() {
-    return [{ source: '/api/:path*', destination: `${apiUrl}/api/:path*` }];
-  },
   async redirects() {
     // Old console URLs (Devices / Device groups / Policies) → Computers / Restrictions. Query strings are kept.
     return [
