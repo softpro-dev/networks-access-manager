@@ -1,6 +1,6 @@
 'use client';
-import { useMemo, useState } from 'react';
-import { previewDomain, previewDomains, previewIps, siteEntries, splitLines, type LinePreview } from '@/lib/domains';
+import { useMemo, useState, type KeyboardEvent } from 'react';
+import { previewDomain, previewDomains, previewIps, siteEntries, siteHost, splitLines, type LinePreview } from '@/lib/domains';
 import { DEFAULT_CONTENT, KIND_INFO, PROTOCOL_TOGGLES } from '@/lib/restrictions';
 import type { Issue, PolicyContent, RestrictionKind } from '@/lib/types';
 import { Badge, Button } from './ui';
@@ -175,6 +175,57 @@ function AddWebsite({ label, value, onChange }: { label: string; value: string; 
   );
 }
 
+/** One From + one To website → three rules (www.from, from, *.from) all sent to the To host. */
+function AddRedirect({ rows, onChange }: { rows: RedirectRow[]; onChange: (rows: RedirectRow[]) => void }) {
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [msg, setMsg] = useState<{ tone: 'error' | 'ok'; text: string } | null>(null);
+  const add = () => {
+    const f = siteEntries(from);
+    if (f.error) return setMsg({ tone: 'error', text: `From: ${f.error}` });
+    const t = siteHost(to);
+    if (t.error || !t.host) return setMsg({ tone: 'error', text: `To: ${t.error ?? 'not a valid website'}` });
+    const target = t.host;
+    const base = f.entries[1]!;
+    if (target === base || target.endsWith(`.${base}`)) return setMsg({ tone: 'error', text: 'A website cannot redirect to itself' });
+    const kept = rows.filter((r) => r.from.trim() || r.to.trim()); // drop the empty starter row
+    const existing = new Set(kept.map((r) => previewDomain(r.from).normalized ?? r.from.trim()));
+    const fresh = f.entries.filter((e) => !existing.has(e));
+    if (!fresh.length) return setMsg({ tone: 'error', text: `${base} already has redirections` });
+    onChange([...kept, ...fresh.map((e) => newRow(e, target))]);
+    setFrom('');
+    setTo('');
+    setMsg({ tone: 'ok', text: `Added ${fresh.length} redirection${fresh.length > 1 ? 's' : ''}: ${fresh.join(', ')} → ${target}` });
+  };
+  const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      add();
+    }
+  };
+  return (
+    <div className="add-site">
+      <div className="add-site-row add-redirect-row">
+        <input type="text" aria-label="Redirect from website" placeholder="From website (e.g. kitabghor.com)" value={from} spellCheck={false} autoCapitalize="off" onChange={(e) => (setFrom(e.target.value), setMsg(null))} onKeyDown={onKey} />
+        <span className="redirect-arrow" aria-hidden>
+          →
+        </span>
+        <input type="text" aria-label="Redirect to website" placeholder="To website (e.g. youtube.com)" value={to} spellCheck={false} autoCapitalize="off" onChange={(e) => (setTo(e.target.value), setMsg(null))} onKeyDown={onKey} />
+        <Button variant="primary" onClick={add} disabled={!from.trim() || !to.trim()}>
+          Add Now
+        </Button>
+      </div>
+      {msg ? (
+        <span className={msg.tone === 'error' ? 'field-error' : 'add-site-ok'} role="status">
+          {msg.text}
+        </span>
+      ) : (
+        <span className="field-hint">Type or paste the two websites. Rules for www.site, site and *.site are created automatically.</span>
+      )}
+    </div>
+  );
+}
+
 function DomainList({ label, hint, value, onChange, field, serverErrors, placeholder }: { label: string; hint: string; value: string; onChange: (v: string) => void; field: string; serverErrors: Issue[]; placeholder: string }) {
   const items = useMemo(() => previewDomains(value), [value]);
   return (
@@ -248,6 +299,7 @@ export function RestrictionEditor({ kind, form, onChange, serverErrors = [] }: {
           <span className="field-hint">
             Visits to a website matching <strong>From</strong> (a domain or &quot;*.domain&quot; pattern) are sent to the exact host in <strong>To</strong>. Redirect targets are always allowed.
           </span>
+          <AddRedirect rows={form.redirects} onChange={(redirects) => set({ redirects })} />
           <div className="redirect-rows">
             {form.redirects.map((r, i) => {
               const e = redirectErrors(r);

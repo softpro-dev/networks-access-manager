@@ -2801,3 +2801,20 @@ textarea:focus-visible {
   color: var(--ok);
   font-weight: 600;
 }
+.add-redirect-row {
+  align-items: center;
+}
+.add-redirect-row .redirect-arrow {
+  padding-top: 0;
+}
+@media (max-width: 640px) {
+  .add-redirect-row {
+    flex-wrap: wrap;
+  }
+  .add-redirect-row input {
+    flex-basis: 100%;
+  }
+  .add-redirect-row .redirect-arrow {
+    display: none;
+  }
+}

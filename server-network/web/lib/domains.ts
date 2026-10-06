@@ -62,18 +62,26 @@ export function previewDomain(raw: string): { normalized: string | null; error: 
  * A leading `www.` / `*.` is dropped so both entries are based on the site's own domain.
  */
 export function siteEntries(raw: string): { entries: string[]; error: string | null } {
+  const r = siteHost(raw, { dropWww: true });
+  if (r.error || !r.host) return { entries: [], error: r.error };
+  const host = r.host.replace(/^\*\./, '');
+  // `www.` is already covered by `*.host`; it is listed too so the list reads the way people type it.
+  return { entries: [`www.${host}`, host, `*.${host}`], error: null };
+}
+
+/** The host of a typed domain or pasted link (scheme, credentials, port, path dropped), normalized. */
+export function siteHost(raw: string, { dropWww = false } = {}): { host: string | null; error: string | null } {
   let s = raw.trim().toLowerCase();
-  if (!s) return { entries: [], error: 'Type a website, e.g. youtube.com' };
+  if (!s) return { host: null, error: 'Type a website, e.g. youtube.com' };
   s = s.replace(/^[a-z][a-z0-9+.-]*:\/\//, ''); // scheme
   s = s.split(/[/?#]/, 1)[0] ?? ''; // path, query, fragment
   s = s.replace(/^[^@]*@/, ''); // user:pass@
   s = s.replace(/:\d+$/, ''); // port
-  s = s.replace(/\.$/, '').replace(/^(\*\.|www\.)/, '');
+  s = s.replace(/\.$/, '');
+  if (dropWww) s = s.replace(/^(\*\.|www\.)/, '');
   const r = previewDomain(s);
-  if (r.error || !r.normalized) return { entries: [], error: r.error ?? 'not a valid website' };
-  const host = r.normalized.replace(/^\*\./, '');
-  // `www.` is already covered by `*.host`; it is listed too so the list reads the way people type it.
-  return { entries: [`www.${host}`, host, `*.${host}`], error: null };
+  if (r.error || !r.normalized) return { host: null, error: r.error ?? 'not a valid website' };
+  return { host: r.normalized, error: null };
 }
 
 export function previewDomains(text: string): LinePreview[] {
