@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { agentEvents } from './agentEvents.js';
 
 export type ActorType = 'USER' | 'DEVICE' | 'SYSTEM';
 
@@ -89,4 +90,7 @@ export async function writeAudit(db: Client, e: AuditEntry): Promise<void> {
       ip: e.ip ? e.ip.slice(0, 45) : null,
     },
   });
+  // Live notification of the organization's connected services (debounced, so an entry written
+  // inside a transaction is delivered after it commits).
+  agentEvents.onAudit(e.organizationId, e.action);
 }

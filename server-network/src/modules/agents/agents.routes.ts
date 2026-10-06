@@ -8,6 +8,11 @@ import { parse } from '../../utils/validation.js';
 import { ackBody, heartbeatBody, policyStatusBody, registerBody, registrationStatusHeaders } from './agents.schemas.js';
 import * as svc from './agents.service.js';
 import { normalizeMac } from '../../domain/mac.js';
+import { agentEvents } from '../../services/agentEvents.js';
+
+/** Keep-alive comment interval on event streams; agents treat ~3 missed pings as a dead connection. */
+export const EVENTS_PING_MS = 20_000;
+const MAX_EVENT_STREAMS = 20_000;
 
 const credentialKey = (req: FastifyRequest) => {
   const t = parseBearer(req.headers.authorization);
@@ -48,6 +53,55 @@ export async function agentRoutes(app: FastifyInstance) {
     reply.header('etag', r.etag).header('cache-control', 'no-cache, private');
     if (ifNoneMatchSatisfied(req.headers['if-none-match'], r.etag)) return reply.code(304).send();
     return r.document;
+  });
+
+  // Live change notifications for org-token services (contract §4.3): a Server-Sent Events stream
+  // that only says "re-fetch now". Plain HTTP response, so it works the same over http and https
+  // and through reverse proxies that allow streaming. The service keeps polling as a fallback.
+  const eventsLimit = makeLimiter(app, enabled, { name: 'agent-events', max: 30, windowMs: 60_000, key: (r) => r.ip });
+  app.get('/api/agent/events', { onRequest: eventsLimit }, async (req, reply) => {
+    const org = await svc.authOrgAccessToken(ctx, req.headers.authorization);
+    if (agentEvents.size >= MAX_EVENT_STREAMS) throw new AppError(503, 'TOO_MANY_STREAMS', 'Too many live connections; poll instead');
+
+    reply.hijack();
+    const res = reply.raw;
+    res.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      // no-transform: compression middlewares/proxies must not buffer the stream.
+      'cache-control': 'no-cache, no-transform, private',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no', // nginx
+      'x-content-type-options': 'nosniff',
+    });
+    res.socket?.setNoDelay(true);
+    res.socket?.setKeepAlive(true, 30_000);
+
+    let closed = false;
+    const write = (chunk: string) => {
+      if (!closed && !res.writableEnded) res.write(chunk);
+    };
+    const stream = {
+      send: (event: string, data: unknown) => write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+      close: () => {
+        if (closed) return;
+        closed = true;
+        res.end();
+      },
+    };
+    const unsubscribe = agentEvents.subscribe(org.id, stream);
+    // Comment lines keep idle proxies/NATs from dropping the connection and let the client detect a dead one.
+    const ping = setInterval(() => write(`: ping\n\n`), EVENTS_PING_MS);
+    const cleanup = () => {
+      clearInterval(ping);
+      unsubscribe();
+      closed = true;
+    };
+    req.raw.on('close', cleanup);
+    res.on('close', cleanup);
+
+    // `retry` = browser-style reconnect hint; `ready` confirms the subscription.
+    write(`retry: 10000\nevent: ready\ndata: ${JSON.stringify({ organization_code: org.code, ping_seconds: EVENTS_PING_MS / 1000 })}\n\n`);
+    req.log.info({ org: org.code, streams: agentEvents.connections(org.id) }, 'agent event stream opened');
   });
 
   app.register(async (authed) => {

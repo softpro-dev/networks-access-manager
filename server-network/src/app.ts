@@ -8,6 +8,7 @@ import type { AppContext } from './types.js';
 import { JwtService } from './services/jwt.js';
 import { AppError, errorBody } from './utils/errors.js';
 import { registerRoutes } from './routes/index.js';
+import { agentEvents } from './services/agentEvents.js';
 import './types.js';
 
 export interface AppDeps {
@@ -83,5 +84,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   await registerRoutes(app);
+  // Live agent event streams are hijacked responses; end them so close() does not wait on them.
+  app.addHook('preClose', async () => agentEvents.closeAll());
   return app;
 }

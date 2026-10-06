@@ -15,6 +15,7 @@ from ..security.protector import make_protector
 from ..security.secret_store import SecretStore
 from ..storage.db import Database
 from .core import Agent, AgentDeps
+from .live_events import LiveEvents, wake_jitter
 from .org_sync import OrgAgent, OrgAgentDeps
 
 
@@ -53,6 +54,16 @@ def build_runtime(paths: AgentPaths | None = None, backend: EnforcementBackend |
     resolved_backend = backend or default_backend(paths.data_dir)
     if settings.mode == MODE_ORG_TOKEN:
         agent: Any = OrgAgent(OrgAgentDeps(settings=settings, paths=paths, db=db, api=api, backend=resolved_backend))
+        if settings.live_updates and settings.access_token is not None:
+            token = settings.access_token
+            agent.live = LiveEvents(
+                settings.api_base_url,
+                token.get_secret_value,
+                agent.wake,
+                verify=settings.tls_verify_value,
+                connect_timeout=min(settings.http_timeout, 10.0),
+            )
+            agent.wake_jitter = wake_jitter
     else:
         deps = AgentDeps(settings=settings, paths=paths, db=db, secrets=store, api=api, backend=resolved_backend)
         agent = Agent(deps, token_source=source.get("device_registration_token"))

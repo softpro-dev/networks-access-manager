@@ -339,6 +339,48 @@ matched the version may be lower than the one it had, which the service accepts.
 means nothing applies to this computer/organization: the service removes its enforcement.
 The management server (`ADMIN_SERVER`) is always allowed by the enforcement exception.
 
+### 4.3 Live change notifications (`GET /api/agent/events`)
+
+An org-token service may keep one **Server-Sent Events** stream open so admin changes apply within
+seconds instead of at the next poll. It is an accelerator only: the stream carries **no policy
+data**, and the service keeps polling `/api/agent/org-policy` every `CACHE_EXPIRATION_TIME_IN_MINUTE`
+regardless, so a lost event, a dropped connection or a server without this endpoint only delays an
+update until the next poll. Plain HTTP response: identical over `http` and `https`.
+
+Request: `GET /api/agent/events` with `Authorization: Bearer <access token>` and
+`Accept: text/event-stream`. Errors before the stream starts use the normal envelope:
+`401 INVALID_ACCESS_TOKEN` (as §4.2), `429`, `503 TOO_MANY_STREAMS`. On success: `200`,
+`Content-Type: text/event-stream`, `Cache-Control: no-cache, no-transform`, `X-Accel-Buffering: no`, then:
+
+```
+retry: 10000
+event: ready
+data: {"organization_code":"INST-001","ping_seconds":20}
+
+: ping                                   (comment line every 20 s)
+
+event: policy_changed
+data: {"reasons":["POLICY_ASSIGNED","POLICY_PUBLISHED"],"at":"2026-10-06T06:53:09.135Z"}
+```
+
+* `policy_changed` is sent to **every** open stream of the organization (never to another
+  organization's) after any change that can alter what one of its computers is served: restriction
+  publish / rollback / (de)activate / delete, assignment add / remove, group delete / membership,
+  computer add / edit / delete / sync reset, organization update. Changes within ~0.75 s are
+  coalesced into one event. `reasons` are audit action names, informational only.
+* On `policy_changed` the service re-fetches `/api/agent/org-policy` as usual (with `If-None-Match`
+  and `X-Device-MAC`; the server decides what that computer gets), after a random 0–2 s delay so a
+  large organization does not hit the server in one instant.
+* Rotating or clearing the access token, or deleting the organization, **closes** the organization's
+  streams; reconnecting then gets `401`.
+* The service treats ~65 s without any line (three missed pings) as a dead connection, reconnects
+  with backoff (5 s → 5 min, jitter; 5 min after `401`/`403`; 1 h after `404`/`405` = older server),
+  and after every reconnect after the first, fetches once (changes made while disconnected sent no
+  event).
+* Reverse proxies must pass the stream unbuffered with a read timeout above 20 s (see
+  `server-network/docs/deployment.md`). The notification bus is in-process: several API instances
+  would need a shared bus.
+
 ---
 
 ## 5. Domain pattern semantics (both sides MUST implement identically)
@@ -418,6 +460,7 @@ A `403 CREDENTIAL_REVOKED` does **not** remove local enforcement.
 | `GET /api/agent/registration-status` | 30 / min per IP |
 | Authenticated agent endpoints | 120 / min per credential |
 | `GET /api/agent/org-policy` | 120 / min per access token |
+| `GET /api/agent/events` | 30 connection attempts / min per IP; 20 000 open streams per server |
 
 ---
 

@@ -130,6 +130,11 @@ class OrgAgent:
         self.backoff = Backoff()
         self._started = False
         self._warned_unassigned = False
+        #: Set by the live-events listener (or anyone) to check the server now instead of at the next poll.
+        self._wake = threading.Event()
+        #: Optional `LiveEvents` listener, started/stopped with `run()` (wired in runtime.py).
+        self.live = None
+        self.wake_jitter: Callable[[], float] = lambda: 0.0
 
     # ------------------------------------------------------------ helpers
     def management(self) -> ManagementEndpoints:
@@ -190,11 +195,34 @@ class OrgAgent:
             log.info("org-token mode: no cached policy")
         self.applier.reassert_cached()
 
+    def wake(self, reason: str = "") -> None:
+        """Check the server now (called from the live-events thread). Thread-safe."""
+        self._wake.set()
+
+    def _sleep(self, stop: threading.Event, delay: float) -> None:
+        """Wait `delay` seconds, returning early on stop or wake (a wake adds a small random delay
+        so many computers notified at once do not all hit the server in the same instant)."""
+        remaining = max(0.0, delay)
+        while remaining > 0 and not stop.is_set():
+            step = min(1.0, remaining)
+            if self._wake.wait(step):
+                self._wake.clear()
+                stop.wait(self.wake_jitter())
+                return
+            remaining -= step
+
     def run(self, stop: threading.Event) -> None:
         self.startup()
-        while not stop.is_set():
-            delay = self.tick()
-            stop.wait(max(0.0, delay))
+        if self.live is not None:
+            self.live.start()
+        try:
+            while not stop.is_set():
+                self._wake.clear()  # this cycle covers every change notified so far
+                delay = self.tick()
+                self._sleep(stop, delay)
+        finally:
+            if self.live is not None:
+                self.live.stop()
         log.info("org-token loop stopped; enforcement state left unchanged")
 
     def tick(self) -> float:

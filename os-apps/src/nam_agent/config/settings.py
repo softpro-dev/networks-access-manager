@@ -30,6 +30,8 @@ ENV_KEYS: dict[str, str] = {
     "CACHE_EXPIRATION_TIME_IN_MINUTE": "cache_expiration_minutes",
     # Testing only: poll every N seconds instead of CACHE_EXPIRATION_TIME_IN_MINUTE (5-3600).
     "NAM_TEST_POLL_SECONDS": "test_poll_seconds",
+    # Live change notifications (GET /api/agent/events, contract §4.3); default on, polling stays the fallback.
+    "NAM_LIVE_UPDATES": "live_updates",
     # --- per-device (enrollment) keys, still supported ---
     "ORGANIZATION_ID": "organization_id",
     "API_BASE_URL": "api_base_url",
@@ -93,6 +95,8 @@ class AgentSettings(BaseModel):
     cache_expiration_minutes: int = Field(default=5, ge=1, le=1440)
     #: testing only — overrides the org-token poll interval (seconds); never set in production
     test_poll_seconds: int | None = Field(default=None, ge=5, le=3600)
+    #: org-token mode: keep a live event stream open so admin changes apply within seconds
+    live_updates: bool = True
     device_registration_token: SecretStr | None = None
     policy_cache_ttl: int = Field(default=300, ge=30, le=86400)
     heartbeat_interval: int = Field(default=60, ge=10, le=3600)
@@ -135,6 +139,11 @@ class AgentSettings(BaseModel):
     @classmethod
     def _test_poll_empty_none(cls, v: object) -> object:
         return None if isinstance(v, str) and not v.strip() else v
+
+    @field_validator("live_updates", mode="before")
+    @classmethod
+    def _live_updates_empty_default(cls, v: object) -> object:
+        return True if isinstance(v, str) and not v.strip() else v
 
     @field_validator("admin_server", "api_base_url", mode="before")
     @classmethod

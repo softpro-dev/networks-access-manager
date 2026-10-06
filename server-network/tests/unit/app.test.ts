@@ -114,3 +114,13 @@ describe('app without database', () => {
     expect(last).toBe(429);
   });
 });
+
+describe('agent event stream', () => {
+  it('requires the organization access token', async () => {
+    for (const authorization of [undefined, 'Bearer nope', 'Bearer ndc_x.y']) {
+      const r = await app.inject({ method: 'GET', url: '/api/agent/events', headers: authorization ? { authorization } : {} });
+      expect(r.statusCode, String(authorization)).toBe(401);
+      expect(r.headers['content-type']).toContain('application/json');
+    }
+  });
+});

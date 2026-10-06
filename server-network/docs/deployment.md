@@ -34,9 +34,36 @@ server {
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto https;
   }
+  # Live change notifications (contract §4.3): long-lived, unbuffered Server-Sent Events.
+  location = /api/agent/events {
+    proxy_pass http://127.0.0.1:60100;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 1h;
+  }
 }
 ```
 with `TRUST_PROXY=127.0.0.1`.
+
+### Live updates through a proxy
+
+`GET /api/agent/events` is a Server-Sent Events stream (one per computer, pinged every 20 s). Any
+proxy in front of the API must not buffer or compress it and must allow idle reads longer than 20 s:
+
+* **nginx:** the `location` block above (the API also sends `X-Accel-Buffering: no`).
+* **Caddy:** works as is (`reverse_proxy` flushes `text/event-stream` immediately).
+* **IIS + ARR:** set `responseBufferLimit="0"` for the URL (or ARR "Response buffer threshold" 0) and
+  disable dynamic compression for `text/event-stream`; keep the ARR proxy timeout ≥ 60 s.
+* **Cloud load balancers:** idle timeout ≥ 60 s.
+
+If the stream cannot get through, nothing breaks: services keep polling every
+`CACHE_EXPIRATION_TIME_IN_MINUTE` and log `live updates: ...` lines explaining why.
+Directly exposed (native `TLS_CERT_PATH`/`TLS_KEY_PATH`, or plain HTTP in development) needs nothing.
 
 ## Caddy
 
@@ -91,4 +118,7 @@ WantedBy=multi-user.target
 ## Scaling notes
 
 Rate-limit counters are in-memory per process. For multiple instances, configure a shared store
-(e.g. Redis for `@fastify/rate-limit`) or pin to one instance. Everything else is stateless.
+(e.g. Redis for `@fastify/rate-limit`) or pin to one instance. The live-update hub
+(`src/services/agentEvents.ts`) is also in-process: with several instances, publish `notifyOrg` over
+a shared bus (e.g. Redis pub/sub) so a change made on one instance reaches streams held by another.
+Everything else is stateless.
