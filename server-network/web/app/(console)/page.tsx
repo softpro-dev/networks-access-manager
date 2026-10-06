@@ -1,16 +1,19 @@
 'use client';
 import Link from 'next/link';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useAuth } from '@/lib/auth';
 import { get } from '@/lib/api';
 import { useOrgScope } from '@/lib/orgScope';
 import { useOrgMap } from '@/lib/queries';
 import { absTime, deviceName, relTime } from '@/lib/format';
 import { KIND_INFO, KINDS, VIA_LABEL } from '@/lib/restrictions';
 import { DEVICE_STATUSES, type AnalyticsOrgRow, type AnalyticsOverview, type AssignmentScope, type AuditEntry, type Device, type DeviceStatus, type Page } from '@/lib/types';
-import { Badge, Button, Card, Empty, ErrorBox, Mono, PageHeader, Spinner, StatusBadge } from '@/components/ui';
+import { Badge, Button, Card, Empty, ErrorBox, Mono, Spinner, StatusBadge } from '@/components/ui';
 import { DeviceActions } from '@/components/DeviceActions';
 import { AuditSummary } from '@/components/AuditSummary';
 import { BarList, StackedBar } from '@/components/Charts';
+import { Icon, type IconName } from '@/components/Icons';
 
 const STATUS_TONE: Record<DeviceStatus, string> = {
   PRE_REGISTERED: 'tone-accent',
@@ -23,13 +26,46 @@ const STATUS_LABEL: Record<DeviceStatus, string> = { PRE_REGISTERED: 'Pre-regist
 const KIND_TONE = { ALLOW_ONLY: 'tone-ok', BLACKLIST: 'tone-danger', REDIRECT: 'tone-violet' } as const;
 const SCOPES: AssignmentScope[] = ['ORGANIZATION', 'GROUP', 'DEVICE'];
 
-function Tile({ label, value, href, tone }: { label: string; value: number | string; href: string; tone?: string }) {
+/** Animates a number from its previous value to `target` (instant with reduced motion). */
+function useCountUp(target: number, ms = 900) {
+  const [shown, setShown] = useState(0);
+  const last = useRef(0);
+  useEffect(() => {
+    const from = last.current;
+    last.current = target;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setShown(target);
+      return;
+    }
+    const start = performance.now();
+    let raf = 0;
+    const step = (now: number) => {
+      const p = Math.min(1, (now - start) / ms);
+      setShown(Math.round(from + (target - from) * (1 - Math.pow(1 - p, 3))));
+      if (p < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [target, ms]);
+  return shown;
+}
+
+function Tile({ label, value, href, tone, icon }: { label: string; value: number | string; href: string; tone: string; icon: IconName }) {
+  const n = useCountUp(typeof value === 'number' ? value : 0);
   return (
-    <Link href={href} className={`stat ${tone ?? ''}`}>
+    <Link href={href} className={`stat stat-fancy ${tone}`}>
+      <span className="stat-icon">
+        <Icon name={icon} size={20} />
+      </span>
       <span className="stat-label">{label}</span>
-      <span className="stat-value">{value}</span>
+      <span className="stat-value">{typeof value === 'number' ? n : value}</span>
     </Link>
   );
+}
+
+function greeting() {
+  const h = new Date().getHours();
+  return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
 }
 
 function OrgCharts({ row, groups }: { row: AnalyticsOrgRow; groups: AnalyticsOverview['groups'] }) {
@@ -126,6 +162,7 @@ function AllOrgs({ data, onPick }: { data: AnalyticsOverview; onPick: (id: strin
 
 export default function DashboardPage() {
   const { orgId, org, isSuper, setOrgId } = useOrgScope();
+  const { user } = useAuth();
   const orgMap = useOrgMap();
   const scope = (isSuper && orgId) || undefined;
   const overview = useQuery({
@@ -149,27 +186,41 @@ export default function DashboardPage() {
 
   return (
     <>
-      <PageHeader
-        title="Dashboard"
-        subtitle={isSuper ? (org ? `${org.code} · ${org.name}` : 'All organizations') : undefined}
-        actions={
-          isSuper &&
-          orgId && (
+      <section className="hero">
+        <div className="hero-main">
+          <span className="hero-kicker">
+            <span className="live-dot" aria-hidden /> Live overview · refreshes every 30 s
+          </span>
+          <h1 className="hero-title">
+            {greeting()}
+            {user?.name ? `, ${user.name.split(' ')[0]}` : ''} 👋
+          </h1>
+          <p className="hero-sub">{isSuper ? (org ? `${org.code} · ${org.name}` : 'All organizations at a glance') : 'Your organization at a glance'}</p>
+        </div>
+        <div className="hero-actions">
+          {isSuper && orgId && (
             <Button size="sm" onClick={() => setOrgId('')}>
               Show all organizations
             </Button>
-          )
-        }
-      />
+          )}
+          <Link href="/restrictions/new" className="btn btn-sm btn-glass">
+            <Icon name="shield" size={14} /> New restriction
+          </Link>
+          <Link href="/computers" className="btn btn-sm btn-glass">
+            <Icon name="computer" size={14} /> Computers
+          </Link>
+        </div>
+        <Icon name="pulse" size={220} className="hero-art" />
+      </section>
       {overview.error && <ErrorBox error={overview.error} title="Could not load statistics" />}
-      <div className="stat-grid">
-        {allOrgs && <Tile label="Organizations" value={v(t?.organizations)} href="/organizations" />}
-        <Tile label="Computers" value={v(t?.computers)} href="/computers" />
-        <Tile label="Online" value={v(t?.online)} href="/computers?status=APPROVED" tone="stat-approved" />
-        <Tile label="Pending approval" value={v(t?.pending)} href="/computers?status=PENDING" tone="stat-pending" />
-        <Tile label="Pre-registered" value={v(t?.pre_registered)} href="/computers?status=PRE_REGISTERED" tone="stat-pre" />
-        <Tile label="Restrictions" value={v(t?.restrictions)} href="/restrictions" tone="stat-restrictions" />
-        <Tile label="Failing" value={v(t?.failing_computers)} href="/audit?action=POLICY_APPLICATION_FAILED" tone="stat-revoked" />
+      <div className="stat-grid stagger">
+        {allOrgs && <Tile label="Organizations" value={v(t?.organizations)} href="/organizations" tone="g-pink" icon="building" />}
+        <Tile label="Computers" value={v(t?.computers)} href="/computers" tone="g-blue" icon="computer" />
+        <Tile label="Online" value={v(t?.online)} href="/computers?status=APPROVED" tone="g-green" icon="online" />
+        <Tile label="Pending approval" value={v(t?.pending)} href="/computers?status=PENDING" tone="g-amber" icon="clock" />
+        <Tile label="Pre-registered" value={v(t?.pre_registered)} href="/computers?status=PRE_REGISTERED" tone="g-cyan" icon="tag" />
+        <Tile label="Restrictions" value={v(t?.restrictions)} href="/restrictions" tone="g-violet" icon="shield" />
+        <Tile label="Failing" value={v(t?.failing_computers)} href="/audit?action=POLICY_APPLICATION_FAILED" tone="g-red" icon="alert" />
       </div>
 
       {overview.isLoading ? <Spinner /> : d && (allOrgs ? <AllOrgs data={d} onPick={setOrgId} /> : row && <OrgCharts row={row} groups={d.groups} />)}
