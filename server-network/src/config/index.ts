@@ -40,7 +40,7 @@ const envSchema = z
       .string()
       .url()
       .refine((v) => /^https?:\/\//i.test(v), 'Must be an http(s) URL')
-      .default('http://localhost:3001'),
+      .default('http://localhost:3000'),
     /** Unset = allowed outside production. The console also hides the button unless ?dev=true. */
     ALLOW_ORGANIZATION_DELETE: boolish.optional(),
     LOGIN_LINK_TTL_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
@@ -82,7 +82,7 @@ export interface AppConfig {
   loginLockoutThreshold: number;
   loginLockoutMinutes: number;
   rateLimitEnabled: boolean;
-  /** Public URL of the Next.js admin console (linked from GET /). */
+  /** Public URL of the shared Next.js console and Fastify listener. */
   webPublicUrl: string;
   allowOrganizationDelete: boolean;
   loginLinkTtlMinutes: number;

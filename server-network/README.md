@@ -33,22 +33,20 @@ npx prisma migrate deploy
 npm run db:seed
 
 # 5. Run (API + admin console together)
-npm run dev                  # API: tsx watch on $PORT · console: next dev on $WEB_PORT (3001)
-npm run build && npm start   # compiled API (dist/) + next start
-curl http://localhost:3000/api/health
+npm run dev                  # console and API on $PORT
+npm run build && npm start   # compiled single-process server
+curl http://localhost:60112/api/health
 ```
 
 ## Admin console
 
-Open **http://localhost:3001** (dev and `npm start`; `WEB_PORT` changes it) and sign in with a seeded
+Open **http://localhost:$PORT** (dev and `npm start`) and sign in with a seeded
 administrator (e.g. `superadmin@example.com` and the password printed by `npm run db:seed`).
-Visiting the API origin itself (`http://localhost:$PORT/`) shows a small page linking to the console
-(`WEB_PUBLIC_URL`, default `http://localhost:3001`).
+The console is served at `/`; the API is served from the same origin under `/api/*`.
 
-* The console is a Next.js app in `web/`. The browser only talks to the console origin; Next proxies
-  `/api/*` to the Fastify API (`API_URL`, default `http://localhost:$PORT`, where `PORT` is read from the
-  real environment or — only that key — from `./.env`). Fastify remains the only backend and security
-  authority; there are no Next API routes or server actions.
+* The console is a Next.js app in `web/`. The browser calls same-origin `/api/*`; Fastify handles those
+  requests directly, while it delegates non-API requests to Next. Fastify remains the only backend and
+  security authority; there are no Next API routes or server actions.
 * Menu (organization admin): **Dashboard · Computers · Restrictions · Set access · Audit log ·
   Organization · Administrators**. Super admins get the same pages plus **Organizations**, with an
   organization picker in the top bar (per tab) that scopes Dashboard, Computers, Restrictions and Set access.
@@ -78,9 +76,9 @@ Visiting the API origin itself (`http://localhost:$PORT/`) shows a small page li
   `POST /api/auth/login-link` and continues like a password sign-in (the console sends `Referrer-Policy: no-referrer`).
 * The access token is kept in memory + `sessionStorage` (per tab, never `localStorage`) and sent as a
   Bearer token; any 401 or the JWT lifetime ending returns you to the sign-in page.
-* `next start` bakes the `/api` rewrite target at **build** time: rebuild after changing `API_URL`/`PORT`.
+* `PORT` is the only listener port. Rebuild after a Next.js upgrade or console code change.
 
-Dev workflow: `npm run dev` (both, via `concurrently`), or `npm run dev:api` / `npm run dev:web` separately.
+Dev workflow: `npm run dev` starts the single server.
 Build: `npm run build` = `build:api` (tsc → `dist/`) + `build:web` (`next build web` → `web/.next/`).
 
 API only: `POST /api/auth/login {"email":"superadmin@example.com","password":"..."}` → use
@@ -90,8 +88,8 @@ API only: `POST /api/auth/login {"email":"superadmin@example.com","password":"..
 
 | Script | Purpose |
 |---|---|
-| `npm run dev` / `start` / `build` | API + console: run (watch) / run compiled / build both |
-| `npm run dev:api` / `dev:web` / `start:api` / `start:web` / `build:api` / `build:web` | one side only |
+| `npm run dev` / `start` / `build` | single-process API + console: run (watch) / run compiled / build both |
+| `npm run build:api` / `build:web` | build one side only |
 | `npm run typecheck` | `tsc --noEmit` over src + tests, then over `web/` |
 | `npm test` | unit tests + integration tests (integration only when `TEST_DATABASE_URL` is set) |
 | `npm run test:unit` / `test:integration` | one suite |
