@@ -260,6 +260,7 @@ class SystemOps(Protocol):
     def firewall_replace(self, rules: tuple[FirewallRule, ...]) -> None: ...
     def firewall_rule_names(self) -> tuple[str, ...]: ...
     def flush_dns(self) -> None: ...
+    def refresh_policies(self) -> None: ...
     def resolve(self, host: str) -> str | None: ...
 
 
@@ -407,6 +408,15 @@ class WindowsSystemOps:  # pragma: no cover - exercised on Windows only
     def flush_dns(self) -> None:
         subprocess.run(["ipconfig", "/flushdns"], capture_output=True, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
 
+    def refresh_policies(self) -> None:
+        """Signal "machine policy changed" (what gpupdate does). Chrome, Edge and Brave listen for it
+        and reload their policies at once, so open tabs follow the new rules without restarting."""
+        import ctypes
+
+        RP_FORCE = 1
+        if not ctypes.windll.userenv.RefreshPolicyEx(True, RP_FORCE):
+            log.warning("RefreshPolicyEx failed (error %s); browsers reload policies on their own schedule", ctypes.GetLastError())
+
     def resolve(self, host: str) -> str | None:
         try:
             return socket.getaddrinfo(host, 443, socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
@@ -474,6 +484,7 @@ class WindowsEnforcementBackend(EnforcementBackend):
             self.ops.write_hosts(render_hosts(self.ops.read_hosts(), plan.hosts_entries))
             self.ops.firewall_replace(plan.firewall)
             self.ops.flush_dns()
+            self._refresh_browsers()
         except Exception as e:  # noqa: BLE001 - never leave a partial rule set
             log.error("enforcement apply failed: %s", e)
             try:
@@ -491,6 +502,14 @@ class WindowsEnforcementBackend(EnforcementBackend):
             sum(1 for v in plan.reg_lists.values() if v),
             len(plan.firewall),
         )
+
+    def _refresh_browsers(self) -> None:
+        """Make running browsers reload their policies now (best effort: the rules are already in
+        the registry; without the signal browsers pick them up on their own, later)."""
+        try:
+            self.ops.refresh_policies()
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not signal a policy refresh to browsers: %s", e)
 
     def _clear_registry_not_in(self, plan: Plan) -> None:
         """Drop values we installed for an earlier policy that this one no longer sets."""
@@ -554,6 +573,7 @@ class WindowsEnforcementBackend(EnforcementBackend):
                 lambda key=key, prev=prev: self.ops.reg_set_list(key, tuple(prev)) if prev else self.ops.reg_delete_key(key),
             )
         attempt("dns", self.ops.flush_dns)
+        self._refresh_browsers()
         if not errors:
             try:
                 self.state_path.unlink()

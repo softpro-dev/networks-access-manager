@@ -44,6 +44,7 @@ class FakeOps:
         self.lists: dict[str, tuple[str, ...]] = {}
         self.rules: tuple = ()
         self.flushed = 0
+        self.policy_refreshes = 0
         self.fail_firewall = False
 
     def read_hosts(self):
@@ -81,6 +82,9 @@ class FakeOps:
 
     def flush_dns(self):
         self.flushed += 1
+
+    def refresh_policies(self):
+        self.policy_refreshes += 1
 
     def resolve(self, host):
         return {"learn.school.org": "198.51.100.7"}.get(host)
@@ -192,3 +196,21 @@ def test_verify_detects_tampering(backend, ops):
 def test_plan_is_pure_and_deterministic():
     p = policy(blocked_domains=("youtube.com", "*.youtube.com"))
     assert build_plan(p, MGMT, lambda h: None) == build_plan(p, MGMT, lambda h: None)
+
+
+def test_browsers_are_told_to_reload_after_apply_and_remove(backend, ops):
+    """Without the policy-changed signal, open Chrome/Edge keep enforcing the old lists."""
+    backend.apply(policy(default_action="block", allowed_domains=("youtube.com",)), MGMT)
+    assert ops.policy_refreshes == 1
+    backend.remove()
+    assert ops.policy_refreshes == 2
+    assert CHROME + r"\URLBlocklist" not in ops.lists
+
+
+def test_failed_refresh_signal_does_not_fail_apply(backend, ops):
+    def boom():
+        raise OSError("RefreshPolicyEx unavailable")
+
+    ops.refresh_policies = boom
+    backend.apply(policy(blocked_domains=("youtube.com",)), MGMT)
+    assert backend.verify().ok

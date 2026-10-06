@@ -5,6 +5,7 @@ import { ApiError } from '@/lib/api';
 import { AuthProvider } from '@/lib/auth';
 import { captureConnectedDevicesFromUrl, stripConnectedDevicesParam } from '@/lib/connectedDevices';
 import { ToastProvider } from '@/components/toast';
+import { PageLoader } from '@/components/PageLoader';
 
 export function Providers({ children }: { children: ReactNode }) {
   // Capture ?connected_devices= during the first client render, before any child effect (e.g. the
@@ -38,6 +39,7 @@ export function Providers({ children }: { children: ReactNode }) {
   );
   return (
     <QueryClientProvider client={qc}>
+      <PageLoader />
       <ToastProvider>
         <AuthProvider>{children}</AuthProvider>
       </ToastProvider>

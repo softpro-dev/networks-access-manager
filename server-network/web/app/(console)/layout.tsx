@@ -34,7 +34,8 @@ export default function ConsoleLayout({ children }: { children: ReactNode }) {
     { href: '/restrictions', label: 'Restrictions' },
     { href: '/access', label: 'Set access' },
     isSuper ? { href: '/organizations', label: 'Organizations' } : { href: `/organizations/${user.organization_id}`, label: 'Organization' },
-    { href: '/users', label: 'Administrators' },
+    // Managing administrators is super-admin only (the API requires it for every change).
+    ...(isSuper ? [{ href: '/users', label: 'Administrators' }] : []),
   ];
   const isActive = (href: string) => (href === '/' ? pathname === '/' : pathname === href || pathname.startsWith(`${href}/`));
 

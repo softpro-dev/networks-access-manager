@@ -301,15 +301,19 @@ component.
 
 For unattended deployment, an organization can mint a **service access token** (admin console →
 organization → *Generate access token*; format `nat_<43 chars>`, non-expiring, revoked only by
-rotating or clearing it). A service authenticates with it and receives the merged **organization-wide**
-policy (all `ORGANIZATION`-scoped restrictions merged as in §4.1); group/device targeting does not
-apply in this mode.
+rotating or clearing it). A service authenticates with it and receives a merged policy:
+
+* if its `X-Device-MAC` matches a computer registered in the organization (console *Computers*, by
+  MAC), **that computer's** merged policy — organization + its groups + direct assignments, exactly as
+  §4.1 — with `assignment_scope: "MERGED"`, so console assignments to computers and groups apply;
+* otherwise the **organization-wide** policy (all `ORGANIZATION`-scoped restrictions merged as in
+  §4.1) with `assignment_scope: "ORGANIZATION"`.
 
 Request: `GET /api/agent/org-policy` with `Authorization: Bearer <access token>`, optional
 `If-None-Match`, and optional `X-Device-MAC: AA:BB:CC:DD:EE:FF` (the service's primary-interface MAC,
-the same selection as the heartbeat's `is_primary` interface). The MAC never changes the response; the
-server only uses it to record which computer of the organization checked in (console "Synced" column:
-the content hash it was served and the time, also on `304` and `404`). Unknown/invalid MACs are ignored. Responses: `200` (body below, with `ETag`), `304 Not Modified`,
+the same selection as the heartbeat's `is_primary` interface). The server also records which computer
+checked in (console "Synced" column: the content hash it was served and the time, also on `304` and
+`404`). Unknown/invalid MACs fall back to the organization-wide policy. Responses: `200` (body below, with `ETag`), `304 Not Modified`,
 `404 NO_POLICY_ASSIGNED`, `401 INVALID_ACCESS_TOKEN` (missing/invalid/rotated/cleared token, or
 disabled organization).
 
@@ -329,7 +333,10 @@ disabled organization).
 
 The document has **no `device_uuid`** (there is no device identity). The service validates
 organization, `content_sha256` and domain/redirect syntax, and enforces the management-server
-exception. `version` is a per-organization counter that rises only when the merged content changes.
+exception. `version` is a per-organization counter (organization-wide document) or the computer's §4.1
+counter (`MERGED` document) that rises only when that merged content changes; when a computer is first
+matched the version may be lower than the one it had, which the service accepts. `404 NO_POLICY_ASSIGNED`
+means nothing applies to this computer/organization: the service removes its enforcement.
 The management server (`ADMIN_SERVER`) is always allowed by the enforcement exception.
 
 ---

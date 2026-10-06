@@ -264,6 +264,12 @@ class Database:
         with self.tx() as c:
             c.execute("DELETE FROM policies WHERE slot = 'candidate'")
 
+    def clear_active(self) -> None:
+        """The server authoritatively has no policy for us: forget current/previous/candidate
+        so a restart does not re-assert stale rules."""
+        with self.tx() as c:
+            c.execute("DELETE FROM policies")
+
     def promote_candidate(self, document: dict[str, Any], etag: str | None) -> None:
         """Atomically: previous <- current, current <- candidate document, drop candidate slot."""
         with self.tx() as c:

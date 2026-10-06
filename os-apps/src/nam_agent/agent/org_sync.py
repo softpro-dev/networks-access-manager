@@ -53,6 +53,49 @@ class OrgAgentDeps:
     device_mac: Callable[[], str | None] | None = None
 
 
+MAX_LOGGED_ENTRIES = 50
+
+
+def _short_list(items: list) -> str:
+    shown = ", ".join(str(x) for x in items[:MAX_LOGGED_ENTRIES])
+    more = len(items) - MAX_LOGGED_ENTRIES
+    return (shown + (f", … (+{more} more)" if more > 0 else "")) or "(none)"
+
+
+def policy_headline(doc: dict) -> str:
+    """One line: version, mode and list sizes of a policy document (no secrets)."""
+    c = doc.get("content") or {}
+    mode = "Allow Only" if c.get("default_action") == "block" else "Black List"
+    if c.get("enabled") is False:
+        mode = "disabled"
+    return (
+        f"{doc.get('policy_id')} v{doc.get('version')}, {mode}, "
+        f"{len(c.get('allowed_domains') or [])} allowed, {len(c.get('blocked_domains') or [])} blocked, "
+        f"{len(c.get('blocked_ips') or [])} IPs, {len(c.get('redirect_rules') or [])} redirects"
+    )
+
+
+def describe_policy(doc: dict) -> list[str]:
+    """Readable lines describing a received policy document, for the service log."""
+    c = doc.get("content") or {}
+    sources = ", ".join(
+        f"{s.get('code')} ({s.get('kind')} via {'/'.join(s.get('via') or [])})" for s in doc.get("sources") or []
+    ) or "(none listed)"
+    flags = ", ".join(
+        f"{k}={'on' if c.get(k) else 'off'}" for k in ("block_quic", "block_dot", "block_doh", "enforce_browser_policies")
+    )
+    redirects = [f"{r.get('from')} -> {r.get('to')}" for r in c.get("redirect_rules") or []]
+    return [
+        f"  scope: {doc.get('assignment_scope')}; from restrictions: {sources}",
+        f"  default action: {c.get('default_action')} (enabled={c.get('enabled')})",
+        f"  allowed domains: {_short_list(list(c.get('allowed_domains') or []))}",
+        f"  blocked domains: {_short_list(list(c.get('blocked_domains') or []))}",
+        f"  blocked IPs: {_short_list(list(c.get('blocked_ips') or []))}",
+        f"  redirects: {_short_list(redirects)}",
+        f"  protocols: {flags}",
+    ]
+
+
 def primary_mac(preferred_interface: str | None = None) -> str | None:
     """MAC of the primary interface, the same selection the agent reports elsewhere. Never raises."""
     try:
@@ -117,6 +160,21 @@ class OrgAgent:
     def active_policy(self) -> StoredPolicy | None:
         return self.db.get_policy("current")
 
+    def _release_unassigned(self, active: StoredPolicy) -> None:
+        """Remove enforcement and forget the cached policy. If removal fails, keep the cache so the
+        next cycle retries (never report 'unassigned' while rules are still installed)."""
+        try:
+            self.backend.remove()
+        except Exception as e:  # noqa: BLE001
+            log.error("could not remove enforcement after restrictions were cleared: %s", e)
+            return
+        self.db.clear_active()
+        self.db.update_row(
+            "policy_status", policy_id="EFFECTIVE", version=0, status="UNASSIGNED", error_code=None,
+            message="no restriction assigned; enforcement removed",
+        )
+        log.info("no organization policy assigned any more: removed enforcement of %s v%s", active.policy_id, active.version)
+
     def _cadence(self) -> float:
         return float(self.settings.cache_expiration_seconds)
 
@@ -176,12 +234,16 @@ class OrgAgent:
         self.db.set_runtime("org_last_sync_ok_at", utcnow())
         self.db.set_runtime("org_last_sync_error", None)
 
+        # One line per check-in, so `Get-Content agent.log -Wait` shows every poll.
         if fetch.kind == "not_modified":
+            log.info("check-in: restrictions unchanged (%s)", policy_headline(active.document) if active else "nothing cached")
             return self._cadence()
         if fetch.kind == "none":
-            if active is not None and not self._warned_unassigned:
-                log.warning("server reports no organization policy assigned; keeping cached policy %s v%s", active.policy_id, active.version)
-                self._warned_unassigned = True
+            log.info("check-in: no restriction assigned to this computer or organization")
+            # An authenticated "no policy assigned" is the admin's decision (restrictions removed),
+            # not an outage: lift enforcement. Network errors / 401 above keep the cache.
+            if active is not None:
+                self._release_unassigned(active)
             return self._cadence()
         self._warned_unassigned = False
 
@@ -198,7 +260,11 @@ class OrgAgent:
         for w in candidate.warnings:
             log.warning("policy %s v%s: %s", candidate.policy_id, candidate.version, w)
         if active is not None and active.pair == candidate.pair and active.content_sha256 == candidate.content_sha256:
+            log.info("check-in: restrictions unchanged (%s)", policy_headline(candidate.document))
             return self._cadence()
+        log.info("check-in: received new restrictions: %s", policy_headline(candidate.document))
+        for line in describe_policy(candidate.document):
+            log.info(line)
         if active is not None and candidate.version < active.version and candidate.policy_id == active.policy_id:
             log.info("server rolled the org policy back from v%s to v%s", active.version, candidate.version)
         self.applier.apply_candidate(candidate)

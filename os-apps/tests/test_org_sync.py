@@ -128,14 +128,33 @@ def test_server_unreachable_keeps_cached_policy(parts):
     assert db.get_policy("current").version == 1
 
 
-def test_no_policy_assigned_keeps_cache(parts):
+def test_no_policy_assigned_removes_enforcement(parts):
+    """An authenticated 404 NO_POLICY_ASSIGNED is the admin clearing restrictions, not an outage."""
     agent, db, api, server, backend, clock = parts
     server.assign_org(version=1)
     agent.tick()
     server.org_assignment = None  # admin removed all org restrictions
     agent.tick()
-    assert db.get_policy("current").version == 1
-    assert backend.installed.version == 1
+    assert backend.installed is None
+    assert db.get_policy("current") is None and db.get_policy("previous") is None
+    assert db.get_row("policy_status")["status"] == "UNASSIGNED"
+    # Assigning again later installs it again.
+    server.assign_org(version=2)
+    agent.tick()
+    assert backend.installed.version == 2
+
+
+def test_failed_removal_keeps_cache_and_retries(parts):
+    agent, db, api, server, backend, clock = parts
+    server.assign_org(version=1)
+    agent.tick()
+    server.org_assignment = None
+    backend.fail_remove = True
+    agent.tick()
+    assert db.get_policy("current").version == 1  # still cached: next cycle retries
+    backend.fail_remove = False
+    agent.tick()
+    assert backend.installed is None and db.get_policy("current") is None
 
 
 def test_restart_reasserts_cached_policy(tmp_path):
@@ -167,3 +186,21 @@ def test_each_fetch_identifies_the_computer_by_mac(parts):
     agent.tick()
     assert [d["device_mac"] for d in server.org_policy_downloads] == [TEST_MAC, TEST_MAC]
     assert server.org_policy_downloads[1]["if_none_match"] is not None  # second one was a 304 check-in
+
+
+def test_every_check_in_is_logged_with_the_received_restrictions(parts, caplog):
+    agent, db, api, server, backend, clock = parts
+    caplog.set_level("INFO", logger="nam_agent.agent.org_sync")
+    server.assign_org(version=1)
+    agent.tick()
+    first = caplog.text
+    assert "check-in: received new restrictions: EFFECTIVE v1" in first
+    assert "blocked domains:" in first and "from restrictions:" in first
+    assert ACCESS_TOKEN not in first  # never log the token
+    caplog.clear()
+    agent.tick()  # 304
+    assert "check-in: restrictions unchanged (EFFECTIVE v1" in caplog.text
+    caplog.clear()
+    server.org_assignment = None
+    agent.tick()
+    assert "check-in: no restriction assigned" in caplog.text

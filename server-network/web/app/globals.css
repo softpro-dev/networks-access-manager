@@ -1110,6 +1110,209 @@ ul.alert.alert-details {
   font-size: 17px;
 }
 
+/* ---------- global page loader (components/PageLoader.tsx) ---------- */
+.page-loader {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  z-index: 1000;
+  pointer-events: none;
+}
+.page-loader-bar {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, var(--accent), var(--cyan));
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 60%, transparent);
+  border-radius: 0 2px 2px 0;
+}
+/* Fast start, then slows down towards 90% while waiting (never "finishes" on its own). */
+.page-loader-loading .page-loader-bar {
+  animation: page-loader-grow 8s cubic-bezier(0.1, 0.8, 0.2, 1) forwards;
+}
+.page-loader-done .page-loader-bar {
+  width: 100%;
+  transition: width 0.2s ease-out;
+  animation: page-loader-fade 0.35s ease-out forwards;
+}
+@keyframes page-loader-grow {
+  0% {
+    width: 0;
+  }
+  10% {
+    width: 35%;
+  }
+  100% {
+    width: 90%;
+  }
+}
+@keyframes page-loader-fade {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .page-loader-loading .page-loader-bar {
+    animation: none;
+    width: 100%;
+    opacity: 0.6;
+  }
+}
+
+/* ---------- sign-in link screen (login?org_admin=…) ---------- */
+.link-signin {
+  align-items: center;
+  text-align: center;
+  padding: 36px 28px 28px;
+  animation: link-signin-in 0.35s ease-out both;
+}
+.link-signin-title {
+  font-size: 19px;
+  margin: 6px 0 0;
+}
+.link-signin p {
+  margin: 0;
+}
+.link-signin-mark {
+  position: relative;
+  width: 88px;
+  height: 88px;
+  display: grid;
+  place-items: center;
+}
+.link-signin-logo {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  font-size: 26px;
+  font-weight: 700;
+  position: relative;
+  z-index: 1;
+  animation: link-signin-breathe 1.6s ease-in-out infinite;
+}
+.link-signin-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  opacity: 0;
+  animation: link-signin-pulse 1.8s ease-out infinite;
+}
+.link-signin-ring-2 {
+  animation-delay: 0.9s;
+}
+.link-signin-dots span {
+  display: inline-block;
+  animation: link-signin-dot 1.2s ease-in-out infinite;
+}
+.link-signin-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.link-signin-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+.link-signin-check,
+.link-signin-fail {
+  width: 76px;
+  height: 76px;
+  fill: none;
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.link-signin-check {
+  stroke: var(--ok);
+}
+.link-signin-check-circle {
+  stroke-dasharray: 151;
+  stroke-dashoffset: 151;
+  animation: link-signin-draw 0.5s ease-out forwards;
+}
+.link-signin-check-tick {
+  stroke-dasharray: 34;
+  stroke-dashoffset: 34;
+  animation: link-signin-draw 0.35s 0.45s ease-out forwards;
+}
+.link-signin-fail {
+  stroke: var(--danger);
+  animation: link-signin-shake 0.45s ease-in-out;
+}
+@keyframes link-signin-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes link-signin-pulse {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(1.25);
+    opacity: 0;
+  }
+}
+@keyframes link-signin-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+}
+@keyframes link-signin-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.2;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+@keyframes link-signin-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes link-signin-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-6px);
+  }
+  75% {
+    transform: translateX(6px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .link-signin,
+  .link-signin-logo,
+  .link-signin-ring,
+  .link-signin-dots span,
+  .link-signin-fail {
+    animation: none;
+  }
+  .link-signin-check-circle,
+  .link-signin-check-tick {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+}
+
 /* ---------- policy editor ---------- */
 .policy-layout {
   display: grid;

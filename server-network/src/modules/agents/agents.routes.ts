@@ -8,7 +8,6 @@ import { parse } from '../../utils/validation.js';
 import { ackBody, heartbeatBody, policyStatusBody, registerBody, registrationStatusHeaders } from './agents.schemas.js';
 import * as svc from './agents.service.js';
 import { normalizeMac } from '../../domain/mac.js';
-import { recordOrgSync } from '../../services/policyResolution.js';
 
 const credentialKey = (req: FastifyRequest) => {
   const t = parseBearer(req.headers.authorization);
@@ -41,11 +40,11 @@ export async function agentRoutes(app: FastifyInstance) {
   // enrollment; the management server is always reachable (management exception) by design.
   app.get('/api/agent/org-policy', { onRequest: orgTokenLimit }, async (req, reply) => {
     const org = await svc.authOrgAccessToken(ctx, req.headers.authorization);
-    const r = await svc.orgPolicyDocument(ctx, org);
-    // Optional X-Device-MAC (contract §4.2) identifies which computer checked in: console "Synced".
+    // Optional X-Device-MAC (contract §4.2): selects that computer's own merged policy and records
+    // its check-in for the console's Synced column.
     const mac = req.headers['x-device-mac'];
-    await recordOrgSync(ctx.prisma, org.id, typeof mac === 'string' ? normalizeMac(mac) : null, r?.document.content_sha256 ?? null);
-    if (!r) throw new AppError(404, 'NO_POLICY_ASSIGNED', 'No organization-wide policy is assigned');
+    const r = await svc.orgPolicyDocument(ctx, org, typeof mac === 'string' ? normalizeMac(mac) : null);
+    if (!r) throw new AppError(404, 'NO_POLICY_ASSIGNED', 'No policy is assigned to this computer or organization');
     reply.header('etag', r.etag).header('cache-control', 'no-cache, private');
     if (ifNoneMatchSatisfied(req.headers['if-none-match'], r.etag)) return reply.code(304).send();
     return r.document;

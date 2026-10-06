@@ -312,7 +312,7 @@ export async function ackPolicy(ctx: AppContext, dev: DeviceIdentity, body: z.in
 }
 
 // ---------------- organization service (access-token) policy ----------------
-import { markOrgAssignmentsSynced, resolveOrgEffectivePolicy } from '../../services/policyResolution.js';
+import { markOrgAssignmentsSynced, recordOrgSync, resolveOrgEffectivePolicy } from '../../services/policyResolution.js';
 import { parseAccessTokenBearer } from '../../domain/deviceToken.js';
 
 const invalidAccess = () => new AppError(401, 'INVALID_ACCESS_TOKEN', 'Invalid or revoked organization access token');
@@ -327,12 +327,27 @@ export async function authOrgAccessToken(ctx: AppContext, authorization: string 
 }
 
 /** Merged organization-wide policy document for a token-authenticated service (SoftProIt.network.conducted). */
-export async function orgPolicyDocument(ctx: AppContext, org: { id: string; code: string }) {
-  const e = await resolveOrgEffectivePolicy(ctx.prisma, org.id);
+/**
+ * Policy document for a token-authenticated service (SoftProIt.network.conducted), contract §4.2.
+ * When its X-Device-MAC matches a computer registered in this organization, that computer's full
+ * merged policy is served (organization + its groups + direct assignments, `assignment_scope:
+ * "MERGED"`) so console assignments to computers and groups apply; otherwise the organization-wide
+ * policy. Also records the check-in for the console's Synced column (also on 304/404).
+ */
+export async function orgPolicyDocument(ctx: AppContext, org: { id: string; code: string }, mac: string | null) {
+  const device = mac ? await ctx.prisma.device.findFirst({ where: { organizationId: org.id, macAddress: mac }, select: { id: true, organizationId: true } }) : null;
+  const e = device ? await resolveEffectivePolicy(ctx.prisma, device) : await resolveOrgEffectivePolicy(ctx.prisma, org.id);
+  if (device) {
+    await recordDeviceSync(ctx.prisma, device.id, e?.contentSha256 ?? null);
+  } else {
+    await recordOrgSync(ctx.prisma, org.id, mac, e?.contentSha256 ?? null);
+  }
   if (!e) return null;
   if (canonicalSha256(e.content) !== e.contentSha256) throw new AppError(500, 'INTERNAL_ERROR', 'Policy integrity check failed');
   // Served either in full or as 304 (the service already has it): both mean it is synced.
-  await markOrgAssignmentsSynced(ctx.prisma, org.id, e.sources.map((s) => s.policy_id));
+  const policyIds = e.sources.map((s) => s.policy_id);
+  if (device) await markDeviceAssignmentsSynced(ctx.prisma, device, policyIds);
+  else await markOrgAssignmentsSynced(ctx.prisma, org.id, policyIds);
   const etag = makePolicyEtag(EFFECTIVE_POLICY_ID, e.version, e.contentSha256);
   return {
     etag,
@@ -341,7 +356,7 @@ export async function orgPolicyDocument(ctx: AppContext, org: { id: string; code
       policy_id: EFFECTIVE_POLICY_ID,
       version: e.version,
       organization_id: org.code,
-      assignment_scope: 'ORGANIZATION',
+      assignment_scope: device ? 'MERGED' : 'ORGANIZATION',
       published_at: e.updatedAt.toISOString(),
       content_sha256: e.contentSha256,
       sources: e.sources.map((s) => ({ code: s.code, kind: s.kind, version: s.version, via: s.via })),

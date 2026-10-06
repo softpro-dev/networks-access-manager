@@ -207,7 +207,18 @@ describeDb('computers, login links, organization delete, analytics', () => {
     const syncedOf = async () => (await a('GET', `/api/devices/${pc.id}`)).json();
     expect(await syncedOf()).toMatchObject({ synced: null, synced_at: null });
     expect((await svc({ authorization: `Bearer ${token}`, 'x-device-mac': '00-1a-2b-3c-4d-99' })).statusCode).toBe(200);
-    expect(await syncedOf()).toMatchObject({ synced: true, synced_via: 'ORG' });
+    expect(await syncedOf()).toMatchObject({ synced: true, synced_via: 'DEVICE' });
+    // A registered computer gets its own merged policy: a restriction assigned only to it applies too.
+    const own = await a('POST', '/api/policies', { name: 'Only this PC', kind: 'BLACKLIST', publish: true, content: { blocked_domains: ['only-this-pc.example'] } });
+    await a('POST', '/api/assignments/bulk', { policy_id: own.json().id, device_ids: [pc.id] });
+    const forPc = await svc({ authorization: `Bearer ${token}`, 'x-device-mac': '00:1A:2B:3C:4D:99' });
+    expect(forPc.json()).toMatchObject({ assignment_scope: 'MERGED' });
+    expect(forPc.json()).not.toHaveProperty('device_uuid');
+    expect(forPc.json().content.blocked_domains).toContain('only-this-pc.example');
+    const anonymous = await svc({ authorization: `Bearer ${token}` }); // unknown computer: org-wide only
+    expect(anonymous.json().assignment_scope).toBe('ORGANIZATION');
+    expect(anonymous.json().content.blocked_domains).not.toContain('only-this-pc.example');
+    await a('DELETE', `/api/policies/${own.json().id}`);
     const listedPc = (await a('GET', `/api/devices?organization_id=${orgA}`)).json().items.find((d: { id: string }) => d.id === pc.id);
     expect(listedPc.synced).toBe(true);
     await a('POST', `/api/policies/${rst1.id}/deactivate`); // content changes → out of date until next fetch
