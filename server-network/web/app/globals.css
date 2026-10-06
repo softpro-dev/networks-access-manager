@@ -2775,3 +2775,29 @@ textarea:focus-visible {
     transition: none;
   }
 }
+
+/* ---------- restriction editor: "Add Website" ---------- */
+.add-site {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.add-site-row {
+  display: flex;
+  gap: 8px;
+}
+.add-site-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 38px;
+}
+.add-site-row .btn {
+  height: 38px;
+  padding: 0 16px;
+}
+.add-site-ok {
+  font-size: 12px;
+  color: var(--ok);
+  font-weight: 600;
+}

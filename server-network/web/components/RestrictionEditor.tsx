@@ -1,6 +1,6 @@
 'use client';
 import { useMemo, useState } from 'react';
-import { previewDomain, previewDomains, previewIps, splitLines, type LinePreview } from '@/lib/domains';
+import { previewDomain, previewDomains, previewIps, siteEntries, splitLines, type LinePreview } from '@/lib/domains';
 import { DEFAULT_CONTENT, KIND_INFO, PROTOCOL_TOGGLES } from '@/lib/restrictions';
 import type { Issue, PolicyContent, RestrictionKind } from '@/lib/types';
 import { Badge, Button } from './ui';
@@ -123,11 +123,64 @@ function Preview({ items, serverErrors }: { items: LinePreview[]; serverErrors: 
   );
 }
 
+/** "Add Website" input + "Add Now": appends `site`, `www.site` and `*.site` (skipping ones already listed). */
+function AddWebsite({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  const [site, setSite] = useState('');
+  const [msg, setMsg] = useState<{ tone: 'error' | 'ok'; text: string } | null>(null);
+  const add = () => {
+    const { entries, error } = siteEntries(site);
+    if (error) return setMsg({ tone: 'error', text: error });
+    const existing = new Set(previewDomains(value).map((i) => i.normalized ?? i.input));
+    const fresh = entries.filter((e) => !existing.has(e));
+    if (!fresh.length) return setMsg({ tone: 'error', text: `${entries[1]} is already in the list` });
+    const lines = splitLines(value);
+    onChange([...lines, ...fresh].join('\n'));
+    setSite('');
+    const list = fresh.length > 1 ? `${fresh.slice(0, -1).join(', ')} and ${fresh[fresh.length - 1]}` : fresh[0];
+    setMsg({ tone: 'ok', text: `Added ${list}` });
+  };
+  return (
+    <div className="add-site">
+      <div className="add-site-row">
+        <input
+          type="text"
+          aria-label={`Add website to ${label}`}
+          placeholder="Add Website"
+          value={site}
+          spellCheck={false}
+          autoCapitalize="off"
+          onChange={(e) => {
+            setSite(e.target.value);
+            setMsg(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault(); // never submit the surrounding form
+              add();
+            }
+          }}
+        />
+        <Button variant="primary" onClick={add} disabled={!site.trim()}>
+          Add Now
+        </Button>
+      </div>
+      {msg ? (
+        <span className={msg.tone === 'error' ? 'field-error' : 'add-site-ok'} role="status">
+          {msg.text}
+        </span>
+      ) : (
+        <span className="field-hint">Type a domain or paste a link. The site and all its subdomains are added (e.g. google.com → www.google.com, google.com and *.google.com).</span>
+      )}
+    </div>
+  );
+}
+
 function DomainList({ label, hint, value, onChange, field, serverErrors, placeholder }: { label: string; hint: string; value: string; onChange: (v: string) => void; field: string; serverErrors: Issue[]; placeholder: string }) {
   const items = useMemo(() => previewDomains(value), [value]);
   return (
     <div className="field">
       <span className="field-label">{label}</span>
+      <AddWebsite label={label} value={value} onChange={onChange} />
       <textarea aria-label={label} rows={12} spellCheck={false} className="mono" placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} />
       <span className="field-hint">{hint}</span>
       <Preview items={items} serverErrors={indexErrors(serverErrors, field)} />

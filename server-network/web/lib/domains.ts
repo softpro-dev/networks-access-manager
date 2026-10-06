@@ -55,6 +55,27 @@ export function previewDomain(raw: string): { normalized: string | null; error: 
   return { normalized, error: null };
 }
 
+/**
+ * "Add website" helper: accepts a domain or a pasted URL ("https://www.youtube.com/watch?v=1")
+ * and returns the entries that cover the whole site: the domain, `www.domain` and `*.domain` (contract §5:
+ * an exact name matches only itself, so `youtube.com` alone misses `www.youtube.com`).
+ * A leading `www.` / `*.` is dropped so both entries are based on the site's own domain.
+ */
+export function siteEntries(raw: string): { entries: string[]; error: string | null } {
+  let s = raw.trim().toLowerCase();
+  if (!s) return { entries: [], error: 'Type a website, e.g. youtube.com' };
+  s = s.replace(/^[a-z][a-z0-9+.-]*:\/\//, ''); // scheme
+  s = s.split(/[/?#]/, 1)[0] ?? ''; // path, query, fragment
+  s = s.replace(/^[^@]*@/, ''); // user:pass@
+  s = s.replace(/:\d+$/, ''); // port
+  s = s.replace(/\.$/, '').replace(/^(\*\.|www\.)/, '');
+  const r = previewDomain(s);
+  if (r.error || !r.normalized) return { entries: [], error: r.error ?? 'not a valid website' };
+  const host = r.normalized.replace(/^\*\./, '');
+  // `www.` is already covered by `*.host`; it is listed too so the list reads the way people type it.
+  return { entries: [`www.${host}`, host, `*.${host}`], error: null };
+}
+
 export function previewDomains(text: string): LinePreview[] {
   return splitLines(text).map((input, i) => {
     const r = previewDomain(input);
