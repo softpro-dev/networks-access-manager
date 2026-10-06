@@ -27,6 +27,8 @@ class Runtime:
     #: Either an enrollment `Agent` (per-device mode) or an `OrgAgent` (org-token mode).
     #: Both expose `run(stop)` and `status_summary()`.
     agent: Any
+    #: The enforcement backend the agent uses (lets the service lift rules when it is stopped).
+    backend: EnforcementBackend | None = None
 
     def close(self) -> None:
         self.api.close()
@@ -54,4 +56,4 @@ def build_runtime(paths: AgentPaths | None = None, backend: EnforcementBackend |
     else:
         deps = AgentDeps(settings=settings, paths=paths, db=db, secrets=store, api=api, backend=resolved_backend)
         agent = Agent(deps, token_source=source.get("device_registration_token"))
-    return Runtime(paths, settings, db, api, agent)
+    return Runtime(paths, settings, db, api, agent, resolved_backend)

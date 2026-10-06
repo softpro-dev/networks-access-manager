@@ -82,6 +82,19 @@ def _service_module():
     return control
 
 
+def _remove_restrictions() -> None:
+    """Remove everything the enforcement backend installed (browser policies, hosts entries,
+    firewall rules). Never fails the calling command."""
+    from .config.paths import resolve_paths
+    from .enforcement import default_backend
+
+    try:
+        default_backend(resolve_paths().data_dir).remove()
+        print("All restrictions removed from this computer.")
+    except Exception as e:  # noqa: BLE001
+        print(f"warning: could not remove every restriction: {e}", file=sys.stderr)
+
+
 def cmd_service(action: str) -> int:
     if (rc := _require_admin()) is not None:
         return rc
@@ -94,7 +107,8 @@ def cmd_service(action: str) -> int:
             svc.install()
             print(f"{SERVICE_NAME} installed (automatic start).")
         elif action == "uninstall":
-            svc.uninstall()
+            svc.uninstall()  # stopping the service already lifts the restrictions...
+            _remove_restrictions()  # ...and this also covers a service that was killed or never ran
             print(f"{SERVICE_NAME} removed.")
         elif action == "start":
             state = svc.start()
