@@ -46,6 +46,7 @@ class FakeOps:
         self.flushed = 0
         self.policy_refreshes = 0
         self.fail_firewall = False
+        self.roots: dict[str, bytes] = {}
 
     def read_hosts(self):
         return self.hosts
@@ -86,8 +87,40 @@ class FakeOps:
     def refresh_policies(self):
         self.policy_refreshes += 1
 
-    def resolve(self, host):
-        return {"learn.school.org": "198.51.100.7"}.get(host)
+    # machine Trusted Root store
+    def root_cert_install(self, der):
+        import hashlib
+
+        self.roots[hashlib.sha1(der).hexdigest().upper()] = der
+
+    def root_cert_remove(self, thumbprint):
+        self.roots.pop(thumbprint, None)
+
+    def root_cert_present(self, thumbprint):
+        return thumbprint in self.roots
+
+
+class FakeRedirector:
+    """Stands in for redirect_server.RedirectServer (no sockets)."""
+
+    def __init__(self, https_free=True, http_free=True):
+        self.https_free, self.http_free = https_free, http_free
+        self.routes: dict | None = None
+        self.https_ok = self.http_ok = False
+
+    @property
+    def running(self):
+        return self.routes is not None
+
+    def start(self, routes, cert_file, key_file):
+        assert cert_file.exists() and key_file.exists()
+        self.routes = dict(routes)
+        self.https_ok, self.http_ok = self.https_free, self.http_free
+        return self.https_ok, self.http_ok
+
+    def stop(self):
+        self.routes = None
+        self.https_ok = self.http_ok = False
 
 
 @pytest.fixture
@@ -96,8 +129,13 @@ def ops():
 
 
 @pytest.fixture
-def backend(tmp_path, ops):
-    return WindowsEnforcementBackend(tmp_path / "enforcement-state.json", ops=ops)
+def redirector():
+    return FakeRedirector()
+
+
+@pytest.fixture
+def backend(tmp_path, ops, redirector):
+    return WindowsEnforcementBackend(tmp_path / "enforcement-state.json", ops=ops, redirect_server=redirector)
 
 
 def test_blacklist_sinkholes_only_what_section5_blocks(backend, ops):
@@ -143,10 +181,62 @@ def test_browser_flags_and_firewall_rules(backend, ops):
     assert {"SoftProIt Network - QUIC", "SoftProIt Network - DoT TCP", "SoftProIt Network - DoT UDP", "SoftProIt Network - blocked IPs"} == names
 
 
-def test_redirect_points_source_at_target_address(backend, ops):
-    backend.apply(policy(redirect_rules=(("games.com", "learn.school.org"),)), MGMT)
-    assert "198.51.100.7 games.com" in ops.hosts
-    assert ".learn.school.org" in ops.lists[CHROME + r"\URLAllowlist"]
+REDIRECTS = (("www.games.com", "learn.school.org"), ("games.com", "learn.school.org"), ("*.games.com", "learn.school.org"))
+CERTS = FIREFOX_KEY + r"\Certificates"
+
+
+def test_redirect_is_served_by_the_local_redirect_server(backend, ops, redirector):
+    backend.apply(policy(redirect_rules=REDIRECTS), MGMT)
+    assert redirector.routes == {"www.games.com": "learn.school.org", "games.com": "learn.school.org", "m.games.com": "learn.school.org"}
+    for name in ("www.games.com", "games.com", "m.games.com"):
+        assert f"127.77.0.1 {name}" in ops.hosts
+    allow = ops.lists[CHROME + r"\URLAllowlist"]
+    assert ".learn.school.org" in allow and ".games.com" in allow
+    assert ".games.com" not in ops.lists.get(CHROME + r"\URLBlocklist", ())
+    assert len(ops.roots) == 1  # its CA is trusted while redirects are served
+    assert ops.scalars[CERTS] == {"ImportEnterpriseRoots": 1}
+    assert backend.verify().ok
+
+
+def test_redirect_falls_back_to_blocking_when_port_443_is_taken(tmp_path, ops):
+    busy = FakeRedirector(https_free=False)
+    backend = WindowsEnforcementBackend(tmp_path / "enforcement-state.json", ops=ops, redirect_server=busy)
+    backend.apply(policy(redirect_rules=REDIRECTS), MGMT)
+    assert "127.77.0.1" not in ops.hosts
+    assert {".www.games.com", ".games.com", ".m.games.com"} <= set(ops.lists[CHROME + r"\URLBlocklist"])
+    assert ops.roots == {}  # nothing trusted when nothing is served
+    assert not busy.running
+    assert CERTS not in ops.scalars
+    assert backend.verify().ok
+
+
+def test_redirect_certificate_is_reused_until_the_names_change(backend, ops, redirector):
+    backend.apply(policy(redirect_rules=REDIRECTS), MGMT)
+    first = set(ops.roots)
+    backend.apply(policy(version=2, redirect_rules=REDIRECTS, block_quic=False), MGMT)
+    assert set(ops.roots) == first
+    backend.apply(policy(version=3, redirect_rules=(("video.example", "learn.school.org"),)), MGMT)
+    assert len(ops.roots) == 1 and set(ops.roots) != first  # old CA removed, new one trusted
+    assert redirector.routes == {"video.example": "learn.school.org"}
+
+
+def test_removing_redirects_untrusts_the_ca_and_deletes_files(backend, ops, redirector):
+    backend.apply(policy(redirect_rules=REDIRECTS), MGMT)
+    backend.apply(policy(version=2, blocked_domains=("tiktok.com",)), MGMT)  # redirects gone
+    assert ops.roots == {} and not redirector.running
+    assert not list(backend.redirect_dir.glob("*.pem"))
+    backend.apply(policy(version=3, redirect_rules=REDIRECTS), MGMT)
+    backend.remove()
+    assert ops.roots == {} and not redirector.running
+    assert "127.77.0.1" not in ops.hosts
+    assert not ops.scalars.get(CERTS)
+    assert not backend.state_path.exists()
+
+
+def test_verify_notices_a_stopped_redirect_server(backend, redirector):
+    backend.apply(policy(redirect_rules=REDIRECTS), MGMT)
+    redirector.stop()
+    assert not backend.verify().ok
 
 
 def test_remove_restores_previous_registry_values_and_hosts(backend, ops):
@@ -195,7 +285,7 @@ def test_verify_detects_tampering(backend, ops):
 
 def test_plan_is_pure_and_deterministic():
     p = policy(blocked_domains=("youtube.com", "*.youtube.com"))
-    assert build_plan(p, MGMT, lambda h: None) == build_plan(p, MGMT, lambda h: None)
+    assert build_plan(p, MGMT) == build_plan(p, MGMT)
 
 
 def test_browsers_are_told_to_reload_after_apply_and_remove(backend, ops):

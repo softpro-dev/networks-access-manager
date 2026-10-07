@@ -2,6 +2,8 @@
 httpx>=0.27,<1
 pydantic>=2.7,<3
 python-dotenv>=1.0,<2
+# Redirect restrictions: certificates for the local redirect server (enforcement/redirect_certs.py).
+cryptography>=42,<47
 # Windows-only: Windows Service host, DPAPI, Event Log.
 pywin32>=306; sys_platform == "win32"
 

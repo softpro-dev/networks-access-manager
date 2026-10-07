@@ -9,7 +9,12 @@ Three layers, all installed and removed as one unit (contract: docs/windows-enfo
   never closed (Chromium reloads policies by itself, Firefox on its next start). Only written when
   `enforce_browser_policies` is true. Pre-existing values are backed up and restored by remove().
 * **hosts file**: names the policy blocks (default allow mode) are sinkholed to 0.0.0.0 for every
-  app, redirect sources point at the target's address. Lives between BEGIN/END markers.
+  app. Lives between BEGIN/END markers.
+* **Redirects**: redirect sources point at a local redirect server (redirect_server.py on
+  127.77.0.1:443/80) that answers `302 → https://<target>/` with a certificate from a name-constrained,
+  per-rule-set CA whose key is discarded (redirect_certs.py); the CA is in the machine root store only
+  while redirects are served. If port 443 is taken by another web server, the sources are blocked by
+  the browser policies instead (HTTPS cannot be redirected by the hosts file alone).
 * **Windows Firewall**: one rule group blocks `blocked_ips` (management addresses carved out),
   QUIC (UDP 443) and DNS-over-TLS (853).
 
@@ -26,7 +31,6 @@ import ipaddress
 import json
 import logging
 import os
-import socket
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -35,6 +39,7 @@ from typing import Callable, Protocol
 
 from ..policy.domains import decide, is_management_host
 from ..policy.validator import ValidatedPolicy
+from .redirect_server import REDIRECT_IP, RedirectServer
 from .base import (
     EnforcementBackend,
     EnforcementError,
@@ -118,10 +123,38 @@ def _unique(items) -> tuple:
     return tuple(dict.fromkeys(items))
 
 
-def build_plan(policy: ValidatedPolicy, management: ManagementEndpoints, resolve: Callable[[str], str | None]) -> Plan:
+def redirect_routes(policy: ValidatedPolicy, management: ManagementEndpoints) -> dict[str, str]:
+    """Host name -> redirect target for every name the hosts file can route (hosts files have no
+    wildcards: `*.x` covers its common subdomains). Decided per §5, management hosts excluded."""
+    mgmt = tuple(management.hosts)
+    routes: dict[str, str] = {}
+    for src, target in policy.content.redirect_rules:
+        names = [src] if not src.startswith("*.") else [f"{s}.{_base(src)}" for s in COMMON_SUBDOMAINS]
+        for name in names:
+            if name in routes or is_management_host(name, mgmt):
+                continue
+            d = decide(
+                name,
+                default_action=policy.content.default_action,  # type: ignore[arg-type]
+                allowed_domains=policy.content.allowed_domains,
+                blocked_domains=policy.content.blocked_domains,
+                redirect_rules=policy.content.redirect_rules,
+                enabled=policy.content.enabled,
+                management_hosts=mgmt,
+            )
+            if d.action == "redirect" and d.target:
+                routes[name] = d.target
+    return routes
+
+
+def build_plan(policy: ValidatedPolicy, management: ManagementEndpoints, *, local_redirect: bool = False) -> Plan:
+    """`local_redirect`: the local redirect server is up (redirect_server.py), so redirect sources
+    are routed to it; otherwise they are blocked by the browser policies (a clear "blocked" page,
+    since an HTTPS site cannot be redirected by the hosts file alone)."""
     c = policy.content
     mgmt = tuple(management.hosts)
     block_mode = c.default_action == "block"
+    routes = redirect_routes(policy, management)
 
     # hosts: only meaningful in allow mode (an allowlist cannot be expressed as a hosts file).
     hosts: list[tuple[str, str]] = []
@@ -135,15 +168,8 @@ def build_plan(policy: ValidatedPolicy, management: ManagementEndpoints, resolve
         for name in _unique(candidates):
             if not is_management_host(name, mgmt) and _decide(policy, name, mgmt) == "block":
                 hosts.append((SINKHOLE, name))
-    for src, target in c.redirect_rules:
-        names = [src] if not src.startswith("*.") else [f"{s}.{_base(src)}" for s in COMMON_SUBDOMAINS]
-        addr = resolve(target)
-        if not addr:
-            log.warning("redirect target %s could not be resolved; redirect skipped", target)
-            continue
-        for name in names:
-            if not is_management_host(name, mgmt) and _decide(policy, name, mgmt) == "redirect":
-                hosts.append((addr, name))
+    if local_redirect:
+        hosts.extend((REDIRECT_IP, name) for name in routes)
 
     reg_scalars: dict[str, RegScalars] = {}
     reg_lists: dict[str, tuple[str, ...]] = {}
@@ -153,6 +179,10 @@ def build_plan(policy: ValidatedPolicy, management: ManagementEndpoints, resolve
         allow += ["." + t for _, t in c.redirect_rules]
         block = ["*"] if block_mode else []
         block += [chromium_filter(p) for p in c.blocked_domains]
+        if routes and not local_redirect:
+            block += ["." + name for name in routes]  # fallback: a clean "blocked" page
+        elif routes:
+            allow += ["." + name for name in routes]  # let navigations reach the local redirect
         # '*.x' as a filter also covers x itself: put x back the way §5 decides it.
         for p in (*c.blocked_domains, *c.allowed_domains):
             if p.startswith("*."):
@@ -173,10 +203,17 @@ def build_plan(policy: ValidatedPolicy, management: ManagementEndpoints, resolve
         ff_allow = [x for p in c.allowed_domains for x in firefox_patterns(p)]
         ff_allow += [x for h in mgmt for x in (f"*://{h}/*", f"*://*.{h}/*")]
         ff_allow += [f"*://{t}/*" for _, t in c.redirect_rules]
+        if routes and not local_redirect:
+            ff_block += [f"*://{name}/*" for name in routes]
+        elif routes:
+            ff_allow += [f"*://{name}/*" for name in routes]
         reg_lists[FIREFOX_KEY + r"\WebsiteFilter\Block"] = _unique(ff_block)
         reg_lists[FIREFOX_KEY + r"\WebsiteFilter\Exceptions"] = _unique(ff_allow)
         if c.block_doh:
             reg_scalars[FIREFOX_KEY + r"\DNSOverHTTPS"] = {"Enabled": 0, "Locked": 1}
+    if local_redirect:
+        # Chromium browsers trust the Windows root store; Firefox only when told to.
+        reg_scalars[FIREFOX_KEY + r"\Certificates"] = {"ImportEnterpriseRoots": 1}
 
     rules: list[FirewallRule] = []
     blocked = _carve_out(c.blocked_ips, management.addresses)
@@ -261,7 +298,9 @@ class SystemOps(Protocol):
     def firewall_rule_names(self) -> tuple[str, ...]: ...
     def flush_dns(self) -> None: ...
     def refresh_policies(self) -> None: ...
-    def resolve(self, host: str) -> str | None: ...
+    def root_cert_install(self, der: bytes) -> None: ...
+    def root_cert_remove(self, thumbprint: str) -> None: ...
+    def root_cert_present(self, thumbprint: str) -> bool: ...
 
 
 class WindowsSystemOps:  # pragma: no cover - exercised on Windows only
@@ -417,11 +456,33 @@ class WindowsSystemOps:  # pragma: no cover - exercised on Windows only
         if not ctypes.windll.userenv.RefreshPolicyEx(True, RP_FORCE):
             log.warning("RefreshPolicyEx failed (error %s); browsers reload policies on their own schedule", ctypes.GetLastError())
 
-    def resolve(self, host: str) -> str | None:
+    # Trusted Root store of the local machine (certutil; the service runs as LocalSystem).
+    def _certutil(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["certutil.exe", *args], capture_output=True, text=True, timeout=60, creationflags=subprocess.CREATE_NO_WINDOW
+        )
+
+    def root_cert_install(self, der: bytes) -> None:
+        import tempfile
+
+        fd, path = tempfile.mkstemp(suffix=".cer")
         try:
-            return socket.getaddrinfo(host, 443, socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
-        except OSError:
-            return None
+            with os.fdopen(fd, "wb") as f:
+                f.write(der)
+            r = self._certutil("-f", "-addstore", "Root", path)
+            if r.returncode != 0:
+                raise EnforcementError(f"could not trust the redirect certificate: {r.stdout.strip()[-200:]}")
+        finally:
+            os.unlink(path)
+
+    def root_cert_remove(self, thumbprint: str) -> None:
+        if self.root_cert_present(thumbprint):
+            r = self._certutil("-delstore", "Root", thumbprint)
+            if r.returncode != 0:
+                raise EnforcementError(f"could not remove the redirect certificate: {r.stdout.strip()[-200:]}")
+
+    def root_cert_present(self, thumbprint: str) -> bool:
+        return self._certutil("-store", "Root", thumbprint).returncode == 0
 
 
 # ---------------------------------------------------------------------------- backend
@@ -430,11 +491,81 @@ class WindowsSystemOps:  # pragma: no cover - exercised on Windows only
 class WindowsEnforcementBackend(EnforcementBackend):
     name = "windows"
 
-    def __init__(self, state_path: Path, ops: SystemOps | None = None):
+    def __init__(self, state_path: Path, ops: SystemOps | None = None, redirect_server: RedirectServer | None = None):
         self.state_path = state_path
         self.ops: SystemOps = ops or WindowsSystemOps()
+        self.redirector = redirect_server or RedirectServer()
+        self.redirect_dir = state_path.parent / "redirect"
         self._plan: Plan | None = None
         self._applied: tuple[str, int] | None = None
+        self._local_redirect = False
+
+    # ------------------------------------------------------------ redirects (local redirect server)
+    def _redirect_files(self) -> tuple[Path, Path]:
+        return self.redirect_dir / "server-chain.pem", self.redirect_dir / "server-key.pem"
+
+    def _ensure_redirect_cert(self, names: list[str]) -> str:
+        """Certificate for exactly `names`: reused while it matches and is far from expiry, else a
+        new one (and the previous CA leaves the root store). Returns the CA thumbprint."""
+        import datetime as dt
+
+        from .redirect_certs import RENEW_BEFORE, make_redirect_certs
+
+        state = self._load_state()
+        cur = state.get("redirect")
+        chain, key = self._redirect_files()
+        if cur and cur.get("names") == names and chain.exists() and key.exists():
+            not_after = dt.datetime.fromisoformat(cur["not_after"])
+            if not_after - dt.datetime.now(dt.timezone.utc) > RENEW_BEFORE:
+                return cur["thumbprint"]
+        if cur:
+            self.ops.root_cert_remove(cur["thumbprint"])
+        certs = make_redirect_certs(names)
+        self.redirect_dir.mkdir(parents=True, exist_ok=True)
+        key.write_bytes(certs.key_pem)
+        chain.write_bytes(certs.chain_pem)
+        # Recorded before the CA is trusted, so remove() can always take it out again.
+        state["redirect"] = {"thumbprint": certs.ca_thumbprint, "names": names, "not_after": certs.not_after.isoformat(), "ca_der": base64.b64encode(certs.ca_der).decode()}
+        self._save_state(state)
+        return certs.ca_thumbprint
+
+    def _prepare_redirects(self, routes: dict[str, str]) -> bool:
+        """Serve the redirects locally. True when HTTPS is up and its CA trusted; False means the
+        port is taken (another web server) and the plan blocks the sources instead."""
+        if not routes:
+            self._release_redirects()
+            return False
+        thumbprint = self._ensure_redirect_cert(sorted(routes))
+        chain, key = self._redirect_files()
+        https_ok, http_ok = self.redirector.start(routes, chain, key)
+        if not https_ok:
+            log.warning(
+                "redirects: port 443 on %s is in use by another program; redirect sources are blocked instead "
+                "(stop that web server to get real redirects)",
+                REDIRECT_IP,
+            )
+            self._release_redirects()
+            return False
+        if not self.ops.root_cert_present(thumbprint):
+            self.ops.root_cert_install(base64.b64decode(self._load_state()["redirect"]["ca_der"]))
+        log.info("redirects: serving %d name(s) locally (https%s)", len(routes), " + http" if http_ok else " only; port 80 in use")
+        return True
+
+    def _release_redirects(self) -> None:
+        """Stop the redirect server, untrust its CA and delete its files."""
+        self.redirector.stop()
+        state = self._load_state()
+        cur = state.pop("redirect", None)
+        if cur:
+            self.ops.root_cert_remove(cur["thumbprint"])
+        for f in self._redirect_files():
+            try:
+                f.unlink()
+            except FileNotFoundError:
+                pass
+        if cur:
+            self._save_state(state)
+        self._local_redirect = False
 
     # state file: registry values that existed before we first wrote them, restored by remove()
     def _load_state(self) -> dict:
@@ -470,7 +601,8 @@ class WindowsEnforcementBackend(EnforcementBackend):
 
     def apply(self, policy: ValidatedPolicy, management: ManagementEndpoints) -> None:
         try:
-            plan = build_plan(policy, management, self.ops.resolve)
+            self._local_redirect = self._prepare_redirects(redirect_routes(policy, management))
+            plan = build_plan(policy, management, local_redirect=self._local_redirect)
             self._backup(plan)
             self._clear_registry_not_in(plan)
             for key, values in plan.reg_scalars.items():
@@ -497,10 +629,11 @@ class WindowsEnforcementBackend(EnforcementBackend):
         self._plan = plan
         self._applied = policy.pair
         log.info(
-            "enforcement applied: %d hosts entries, %d browser policy lists, %d firewall rules",
+            "enforcement applied: %d hosts entries, %d browser policy lists, %d firewall rules%s",
             len(plan.hosts_entries),
             sum(1 for v in plan.reg_lists.values() if v),
             len(plan.firewall),
+            ", local redirects on" if self._local_redirect else "",
         )
 
     def _refresh_browsers(self) -> None:
@@ -551,6 +684,11 @@ class WindowsEnforcementBackend(EnforcementBackend):
         if self.ops.firewall_rule_names() != tuple(sorted(r.name for r in p.firewall)):
             return VerifyResult(ok=False, detail="firewall rules do not match")
         checks.append("firewall")
+        if self._local_redirect:
+            cur = self._load_state().get("redirect")
+            if not (self.redirector.running and self.redirector.https_ok and cur and self.ops.root_cert_present(cur["thumbprint"])):
+                return VerifyResult(ok=False, detail="local redirect server is not running")
+            checks.append("redirects")
         return VerifyResult(ok=True, checks=tuple(checks))
 
     def remove(self) -> None:
@@ -563,6 +701,7 @@ class WindowsEnforcementBackend(EnforcementBackend):
                 errors.append(f"{label}: {e}")
 
         attempt("hosts", lambda: self.ops.write_hosts(render_hosts(self.ops.read_hosts(), ())))
+        attempt("redirects", self._release_redirects)
         attempt("firewall", lambda: self.ops.firewall_replace(()))
         state = self._load_state()
         for key, backup in state["scalars"].items():
