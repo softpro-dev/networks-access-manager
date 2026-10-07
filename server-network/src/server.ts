@@ -38,7 +38,10 @@ async function main() {
     config.tlsCertPath && config.tlsKeyPath
       ? { cert: readFileSync(config.tlsCertPath), key: readFileSync(config.tlsKeyPath), minVersion: 'TLSv1.2' as const }
       : null;
-  const web = next({ dev: config.nodeEnv !== 'production', dir: resolve(process.cwd(), 'web') });
+  // next is CJS: at runtime the default import is the factory, but its typings (export { default })
+  // make NodeNext see a namespace object, so cast to the factory type.
+  const createNext = next as unknown as typeof next.default;
+  const web = createNext({ dev: config.nodeEnv !== 'production', dir: resolve(process.cwd(), 'web') });
   await web.prepare();
   const handleWebRequest = web.getRequestHandler();
 
