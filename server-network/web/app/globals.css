@@ -2818,3 +2818,23 @@ textarea:focus-visible {
     display: none;
   }
 }
+
+/* ---------- brand mark (components/BrandMark.tsx, same art as app/icon.svg) ---------- */
+svg.brand-mark {
+  display: block;
+  flex: none;
+  background: none;
+  border-radius: 25%; /* rx 8 of 32: keeps the glow shadow on the rounded shape */
+  animation: none;
+}
+.sidebar svg.brand-mark {
+  box-shadow: 0 6px 18px rgb(236 72 153 / 40%);
+}
+svg.brand-mark.link-signin-logo {
+  animation: link-signin-breathe 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  svg.brand-mark.link-signin-logo {
+    animation: none;
+  }
+}

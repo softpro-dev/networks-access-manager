@@ -7,6 +7,7 @@ import { useOrganizations } from '@/lib/queries';
 import { Badge, Button, Spinner } from '@/components/ui';
 import { OrgPicker } from '@/components/OrgPicker';
 import { Icon, type IconName } from '@/components/Icons';
+import { BrandMark } from '@/components/BrandMark';
 
 interface NavItem {
   href: string;
@@ -46,9 +47,7 @@ export default function ConsoleLayout({ children }: { children: ReactNode }) {
     <div className="shell">
       <aside className={`sidebar ${menuOpen ? 'open' : ''}`}>
         <div className="brand">
-          <span className="brand-mark" aria-hidden>
-            N
-          </span>
+          <BrandMark size={36} />
           <span className="brand-text">
             Network Access
             <span className="brand-sub">SoftProIt</span>

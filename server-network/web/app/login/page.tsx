@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { useAuth } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
 import { Alert, Button, ErrorBox, Field, Spinner } from '@/components/ui';
+import { BrandMark } from '@/components/BrandMark';
 
 /** One-time sign-in link state (?org_admin=<token>, issued by a super admin). */
 type LinkState = 'checking' | 'busy' | 'done' | 'failed' | 'none';
@@ -24,7 +25,7 @@ function LinkSignInScreen({ state, onUsePassword }: { state: 'busy' | 'done' | '
             <div className="link-signin-mark" aria-hidden>
               <span className="link-signin-ring" />
               <span className="link-signin-ring link-signin-ring-2" />
-              <span className="brand-mark link-signin-logo">N</span>
+              <BrandMark size={52} className="link-signin-logo" />
             </div>
             <h1 className="link-signin-title">Signing you in</h1>
             <p className="muted">
@@ -143,9 +144,7 @@ export default function LoginPage() {
     <main className="login-wrap">
       <form className="login-card" onSubmit={onSubmit} noValidate>
         <div className="brand brand-lg">
-          <span className="brand-mark" aria-hidden>
-            N
-          </span>
+          <BrandMark size={34} />
           <span>Network Access Manager</span>
         </div>
         <h1 className="login-title">Sign in to the admin console</h1>
