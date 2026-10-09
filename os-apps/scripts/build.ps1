@@ -7,7 +7,13 @@
 .PARAMETER Target
   Service, Admin or All (default).
 .PARAMETER Version
-  Installer version. Default: $env:BUILD_VERSION, else BUILD_VERSION in os-apps\.env, else 1.0.0.
+  Installer version. Default: BUILD_VERSION in the env file, else 1.0.0.
+.PARAMETER SelectEnv
+  Show a searchable list of os-apps\__all.env.for.build\*.env and build with the chosen one.
+  Installers are then named <env name>-SoftProIt-Network-<App>-<ver>-setup.exe.
+.PARAMETER EnvFile
+  Build with this env file (a path, or a file name inside os-apps\__all.env.for.build; same naming
+  as -SelectEnv). Default: os-apps\.env, installers without a prefix.
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Target Admin -Installer
 .NOTES
@@ -22,7 +28,9 @@ param(
   [string]$Version = "",
   [switch]$SkipTests,
   [switch]$Installer,
-  [string]$Python = ""   # override the base interpreter, e.g. "py -3.12" or C:\Python312\python.exe
+  [string]$Python = "",   # override the base interpreter, e.g. "py -3.12" or C:\Python312\python.exe
+  [switch]$SelectEnv,
+  [string]$EnvFile = ""
 )
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
@@ -30,16 +38,84 @@ Set-Location $Root
 
 if (-not [Environment]::Is64BitOperatingSystem) { throw "A 64-bit Windows host is required." }
 
-# KEY from the environment, else the last KEY= in os-apps\.env (quotes stripped), else ''.
-function Get-EnvValue([string]$Key) {
-  $fromEnv = [Environment]::GetEnvironmentVariable($Key)
-  if ($fromEnv) { return $fromEnv.Trim() }
-  $envFile = Join-Path $Root ".env"
-  if (Test-Path $envFile) {
-    $line = Get-Content $envFile | Where-Object { $_ -match "^\s*$Key\s*=" } | Select-Object -Last 1
-    if ($line) { return ($line -replace "^\s*$Key\s*=\s*", '').Trim().Trim('"', "'") }
-  }
+# Last KEY= in an env file (quotes stripped), or ''.
+function Read-EnvKey([string]$Path, [string]$Key) {
+  if (-not (Test-Path -LiteralPath $Path)) { return "" }
+  $line = Get-Content -LiteralPath $Path | Where-Object { $_ -match "^\s*$Key\s*=" } | Select-Object -Last 1
+  if ($line) { return ($line -replace "^\s*$Key\s*=\s*", '').Trim().Trim('"', "'") }
   return ""
+}
+
+# Searchable picker over os-apps\__all.env.for.build\*.env: type to filter, Up/Down, Enter, Esc.
+# Shows the server and version of each file, never the token. Returns the chosen FileInfo.
+function Select-BuildEnv {
+  $dir = Join-Path $Root "__all.env.for.build"
+  $files = @(Get-ChildItem -LiteralPath $dir -Filter "*.env" -File -ErrorAction SilentlyContinue | Sort-Object Name)
+  if (-not $files) { throw "No env files found in $dir (add e.g. CUSTOMER-001.env with ADMIN_SERVER, ACCESS_TOKE, ...)." }
+  $items = foreach ($f in $files) {
+    [pscustomobject]@{ File = $f; Name = $f.BaseName; Server = (Read-EnvKey $f.FullName "ADMIN_SERVER"); Version = (Read-EnvKey $f.FullName "BUILD_VERSION") }
+  }
+  if ([Console]::IsInputRedirected) {
+    # No interactive console (e.g. piped): numbered prompt instead.
+    for ($i = 0; $i -lt $items.Count; $i++) { Write-Host ("  {0,2}) {1,-28} {2}" -f ($i + 1), $items[$i].Name, $items[$i].Server) }
+    $n = [int](Read-Host "Number of the env file to build with")
+    if ($n -lt 1 -or $n -gt $items.Count) { throw "No env file selected." }
+    return $items[$n - 1].File
+  }
+  $filter = ""; $sel = 0
+  while ($true) {
+    $shown = @($items | Where-Object { "$($_.Name) $($_.Server)".IndexOf($filter, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+    if ($sel -ge $shown.Count) { $sel = [Math]::Max(0, $shown.Count - 1) }
+    if ($sel -lt 0) { $sel = 0 }
+    Clear-Host
+    Write-Host "Build $Target - choose the settings (os-apps\__all.env.for.build)" -ForegroundColor Cyan
+    Write-Host "Type to search   Up/Down to move   Enter to build   Esc to cancel" -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "  Search: " -NoNewline; Write-Host "$filter" -NoNewline -ForegroundColor Yellow; Write-Host "_"
+    Write-Host ""
+    if (-not $shown) { Write-Host "  (no env file matches '$filter')" -ForegroundColor DarkYellow }
+    for ($i = 0; $i -lt $shown.Count; $i++) {
+      $row = " {0,-28} {1,-42} {2}" -f $shown[$i].Name, $shown[$i].Server, $(if ($shown[$i].Version) { "v$($shown[$i].Version)" } else { "" })
+      if ($i -eq $sel) { Write-Host ">$row" -ForegroundColor Black -BackgroundColor Cyan } else { Write-Host " $row" }
+    }
+    Write-Host ""
+    Write-Host "  $($shown.Count) of $($items.Count) env files" -ForegroundColor DarkGray
+    $k = [Console]::ReadKey($true)
+    switch ($k.Key) {
+      "UpArrow" { $sel--; continue }
+      "DownArrow" { $sel++; continue }
+      "PageUp" { $sel = 0; continue }
+      "PageDown" { $sel = $shown.Count - 1; continue }
+      "Enter" { if ($shown) { Clear-Host; return $shown[$sel].File }; continue }
+      "Escape" { Clear-Host; throw "Build cancelled (no env file selected)." }
+      "Backspace" { if ($filter) { $filter = $filter.Substring(0, $filter.Length - 1) }; $sel = 0; continue }
+      default { if ($k.KeyChar -and -not [char]::IsControl($k.KeyChar)) { $filter += $k.KeyChar; $sel = 0 } }
+    }
+  }
+}
+
+# Which env file this build uses. A chosen file (-SelectEnv / -EnvFile) is used as is; only the
+# default os-apps\.env can still be overridden by environment variables (older behaviour).
+$ExplicitEnv = $false
+if ($SelectEnv) { $EnvPath = (Select-BuildEnv).FullName; $ExplicitEnv = $true }
+elseif ($EnvFile) {
+  $EnvPath = (Resolve-Path -LiteralPath $EnvFile -ErrorAction SilentlyContinue).Path
+  if (-not $EnvPath) { $EnvPath = (Resolve-Path -LiteralPath (Join-Path $Root "__all.env.for.build\$EnvFile") -ErrorAction SilentlyContinue).Path }
+  if (-not $EnvPath) { throw "Env file not found: $EnvFile" }
+  $ExplicitEnv = $true
+}
+else { $EnvPath = Join-Path $Root ".env" }
+$EnvLabel = if ($ExplicitEnv) { Split-Path -Leaf $EnvPath } else { "os-apps\.env" }
+# Installer file name prefix: the env file's name (letters, digits, '.', '_', '-' only).
+$Prefix = if ($ExplicitEnv) { ([IO.Path]::GetFileNameWithoutExtension($EnvPath) -replace '[^A-Za-z0-9._-]+', '-').Trim('-') } else { "" }
+if ($ExplicitEnv) { Write-Host "Using settings from $EnvLabel" -ForegroundColor Cyan }
+
+function Get-EnvValue([string]$Key) {
+  if (-not $ExplicitEnv) {
+    $fromEnv = [Environment]::GetEnvironmentVariable($Key)
+    if ($fromEnv) { return $fromEnv.Trim() }
+  }
+  return Read-EnvKey $EnvPath $Key
 }
 
 $BuildVersion = if ($Version) { $Version } else { Get-EnvValue "BUILD_VERSION" }
@@ -56,20 +132,20 @@ if (-not $CfgCache) { $CfgCache = "5" }
 $CfgCode = Get-EnvValue "CODE_NUMBER"   # display only: identifies the build on the setup screen
 $CfgTestPoll = Get-EnvValue "NAM_TEST_POLL_SECONDS"   # testing only: poll every N seconds
 if ($CfgTestPoll -and ($CfgTestPoll -notmatch '^\d+$' -or [int]$CfgTestPoll -lt 5 -or [int]$CfgTestPoll -gt 3600)) {
-  throw "NAM_TEST_POLL_SECONDS in os-apps\.env must be 5-3600 seconds, or empty (got '$CfgTestPoll')"
+  throw "NAM_TEST_POLL_SECONDS in $EnvLabel must be 5-3600 seconds, or empty (got '$CfgTestPoll')"
 }
 if ($CfgTestPoll -and $Target -ne "Admin") {
-  Write-Warning "TEST BUILD: the service will poll every $CfgTestPoll s (NAM_TEST_POLL_SECONDS). Remove it from os-apps\.env before building for real PCs."
+  Write-Warning "TEST BUILD: the service will poll every $CfgTestPoll s (NAM_TEST_POLL_SECONDS). Remove it from $EnvLabel before building for real PCs."
 }
 if ($Installer) {
-  if ($CfgCode -match '["'']' -or $CfgCode.Length -gt 64) { throw "CODE_NUMBER in os-apps\.env must be at most 64 characters, without quotes" }
-  if ($CfgServer -notmatch '^https?://[^\s"'']+$') { throw "ADMIN_SERVER in os-apps\.env must be an http(s):// URL (got '$CfgServer')" }
+  if ($CfgCode -match '["'']' -or $CfgCode.Length -gt 64) { throw "CODE_NUMBER in $EnvLabel must be at most 64 characters, without quotes" }
+  if ($CfgServer -notmatch '^https?://[^\s"'']+$') { throw "ADMIN_SERVER in $EnvLabel must be an http(s):// URL (got '$CfgServer')" }
   if ($Target -ne "Admin") {
     if ($CfgToken -notmatch '^nat_[^\s"'']+$' -or $CfgToken.Length -gt 512) {
-      throw "ACCESS_TOKE in os-apps\.env must be the organization access token (nat_...). Admin console: Organizations > Generate token."
+      throw "ACCESS_TOKE in $EnvLabel must be the organization access token (nat_...). Admin console: Organizations > Generate token."
     }
     if ($CfgCache -notmatch '^\d+$' -or [int]$CfgCache -lt 1 -or [int]$CfgCache -gt 1440) {
-      throw "CACHE_EXPIRATION_TIME_IN_MINUTE in os-apps\.env must be 1-1440 (got '$CfgCache')"
+      throw "CACHE_EXPIRATION_TIME_IN_MINUTE in $EnvLabel must be 1-1440 (got '$CfgCache')"
     }
   }
 }
@@ -165,13 +241,20 @@ if ($Installer) {
     )
     Set-Content -Encoding UTF8 $adminCfg $shared
     Set-Content -Encoding UTF8 $serviceCfg ($shared + "#define CfgToken `"$CfgToken`"" + "#define CfgTestPoll `"$CfgTestPoll`"")
+    $built = @()
     foreach ($app in $apps) {
-      & $iscc /Q "/DAppVersion=$BuildVersion" $app.Iss
+      $base = "SoftProIt-Network-$($app.Name)-$BuildVersion-setup"
+      if ($Prefix) { $base = "$Prefix-$base" }
+      & $iscc /Q "/DAppVersion=$BuildVersion" "/F$base" $app.Iss
       if ($LASTEXITCODE -ne 0) { throw "ISCC ($($app.Name)) failed" }
-      Write-Host "Installer: $(Join-Path $Root "installer\Output\SoftProIt-Network-$($app.Name)-$BuildVersion-setup.exe")"
+      $out = Join-Path $Root "installer\Output\$base.exe"
+      $built += $out
+      Write-Host "Installer: $out"
     }
+    # The double-click wrappers copy exactly these files to Downloads.
+    Set-Content -Encoding UTF8 (Join-Path $Root "build\last-installers.txt") $built
   } finally {
     Remove-Item -Force $adminCfg, $serviceCfg -ErrorAction SilentlyContinue  # holds the token
   }
-  Write-Host "Baked in: ADMIN_SERVER=$CfgServer, CACHE_EXPIRATION_TIME_IN_MINUTE=$CfgCache, CODE_NUMBER=$CfgCode$(if ($Target -ne 'Admin') { ', ACCESS_TOKE=nat_...' })"
+  Write-Host "Baked in (from $EnvLabel): ADMIN_SERVER=$CfgServer, CACHE_EXPIRATION_TIME_IN_MINUTE=$CfgCache, CODE_NUMBER=$CfgCode$(if ($Target -ne 'Admin') { ', ACCESS_TOKE=nat_...' })"
 }

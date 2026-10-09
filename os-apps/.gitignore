@@ -11,3 +11,6 @@ installer/Output/
 *.db-wal
 *.db-shm
 *.log
+
+# Per-customer build settings (contain organization access tokens). Never commit.
+__all.env.for.build/

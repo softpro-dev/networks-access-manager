@@ -1,7 +1,9 @@
 #!/bin/bash
-# Double-click on macOS (Finder opens it in Terminal) to build
-# SoftProIt-Network-Service-<BUILD_VERSION>.dmg and copy it to your Downloads folder.
-# Version: BUILD_VERSION in os-apps/.env (default 1.0.0). Output: os-apps/installer/Output/
+# Double-click on macOS (Finder opens it in Terminal) to build the SoftProIt Network Service DMG
+# and copy it to your Downloads folder.
+# You choose the settings from a searchable list of os-apps/__all.env.for.build/*.env
+# (type to search, Up/Down, Enter). The DMG is named after the chosen file:
+#   <env name>-SoftProIt-Network-Service-<BUILD_VERSION>.dmg   (in os-apps/installer/Output/)
 # Needs macOS with Python 3.11+ (python3) and the Xcode command line tools.
 # Extra arguments are passed to os-apps/scripts/build.sh (e.g. --skip-tests).
 cd "$(dirname "$0")/.." || exit 1
@@ -13,22 +15,27 @@ finish() {
   exit "$1"
 }
 
-if ! bash "$ROOT/os-apps/scripts/build.sh" --target service --dmg "$@"; then
+if ! bash "$ROOT/os-apps/scripts/build.sh" --target service --dmg --select-env "$@"; then
   echo
-  echo "Build FAILED."
+  echo "Build FAILED or cancelled."
   finish 1
 fi
 
-DMG=$(ls -t "$ROOT"/os-apps/installer/Output/SoftProIt-Network-Service-*.dmg 2>/dev/null | head -n 1)
-if [ -z "$DMG" ]; then
-  echo "Built, but no DMG found in os-apps/installer/Output/."
+LIST="$ROOT/os-apps/build/last-installers.txt"
+if [ ! -s "$LIST" ]; then
+  echo "Built, but no DMG was recorded. Look in os-apps/installer/Output/."
   finish 1
 fi
 mkdir -p "$HOME/Downloads"
-if cp -f "$DMG" "$HOME/Downloads/"; then
-  echo "Copied to $HOME/Downloads/$(basename "$DMG")"
-  echo "Done."
-  finish 0
-fi
-echo "Built, but copying to Downloads FAILED. Find it in os-apps/installer/Output/"
-finish 1
+RC=0
+while IFS= read -r DMG; do
+  [ -n "$DMG" ] || continue
+  if cp -f "$DMG" "$HOME/Downloads/"; then
+    echo "Copied to $HOME/Downloads/$(basename "$DMG")"
+  else
+    echo "Copying $(basename "$DMG") to Downloads FAILED. Find it in os-apps/installer/Output/"
+    RC=1
+  fi
+done < "$LIST"
+[ "$RC" = 0 ] && echo "Done."
+finish "$RC"
