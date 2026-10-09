@@ -51,6 +51,29 @@ describeDb('admin authentication & authorization', () => {
     expect(again.statusCode).toBe(401);
   });
 
+  it('super admin changes an admin email: unique, signs them out, new email signs in, audited', async () => {
+    const superT = await login(h.app, 'super@example.com');
+    const orgT = await login(h.app, 'admin@inst.example.com');
+    const u = await h.prisma.user.findUniqueOrThrow({ where: { email: 'admin@inst.example.com' } });
+    const patch = (payload: object, t = superT) => h.app.inject({ method: 'PATCH', url: `/api/users/${u.id}`, headers: bearer(t), payload });
+
+    const taken = await patch({ email: 'super@example.com' });
+    expect(taken.statusCode).toBe(409);
+    expect(taken.json().error.code).toBe('EMAIL_IN_USE');
+    expect((await patch({ email: 'not-an-email' })).statusCode).toBe(400);
+    expect((await patch({ email: 'x@inst.example.com' }, orgT)).statusCode).toBe(403); // org admins cannot
+
+    const r = await patch({ email: '  New.Admin@Inst.Example.com ' });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().email).toBe('new.admin@inst.example.com');
+    expect((await h.app.inject({ method: 'GET', url: '/api/auth/me', headers: bearer(orgT) })).statusCode).toBe(401);
+    const oldLogin = await h.app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: 'admin@inst.example.com', password: PASSWORD } });
+    expect(oldLogin.statusCode).toBe(401);
+    await login(h.app, 'new.admin@inst.example.com');
+    const log = await h.prisma.auditLog.findFirstOrThrow({ where: { action: 'ADMIN_UPDATED', targetId: u.id } });
+    expect(log.metadata).toMatchObject({ email_from: 'admin@inst.example.com', email_to: 'new.admin@inst.example.com' });
+  });
+
   it('disabling an organization locks out its admins', async () => {
     const superT = await login(h.app, 'super@example.com');
     const orgT = await login(h.app, 'admin@inst.example.com');

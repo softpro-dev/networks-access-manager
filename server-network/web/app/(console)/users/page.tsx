@@ -6,7 +6,7 @@ import { useAuth } from '@/lib/auth';
 import { useAction, useOrganizations } from '@/lib/queries';
 import { absTime, relTime } from '@/lib/format';
 import type { ActiveStatus, Page, Role, User } from '@/lib/types';
-import { Alert, Badge, Button, ConfirmDialog, Empty, ErrorBox, Field, Modal, PageHeader, Pagination, Spinner, StatusBadge } from '@/components/ui';
+import { Alert, Badge, Button, ConfirmDialog, CopyButton, Empty, ErrorBox, Field, Modal, PageHeader, Pagination, Spinner, StatusBadge } from '@/components/ui';
 
 const MIN_PASSWORD = 12;
 
@@ -89,21 +89,34 @@ function CreateUserDialog({ open, onClose }: { open: boolean; onClose: () => voi
 }
 
 function EditUserDialog({ user, onClose }: { user: User | null; onClose: () => void }) {
+  const { user: me } = useAuth();
+  const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   useEffect(() => {
+    setEmail(user?.email ?? '');
     setName(user?.name ?? '');
     setPassword('');
   }, [user]);
+  const newEmail = email.trim().toLowerCase();
+  const emailChanged = !!user && newEmail !== user.email;
+  const signsOut = !!password || (emailChanged && user?.id !== me?.id);
   const m = useAction(
-    () => patch<User>(`/users/${user!.id}`, { name: name.trim() ? name.trim() : null, ...(password ? { password } : {}) }),
-    { success: password ? 'Administrator updated; their sessions were revoked' : 'Administrator updated', invalidate: [['users']], onSuccess: onClose },
+    () =>
+      patch<User>(`/users/${user!.id}`, {
+        name: name.trim() ? name.trim() : null,
+        ...(emailChanged ? { email: newEmail } : {}),
+        ...(password ? { password } : {}),
+      }),
+    { success: signsOut ? 'Administrator updated; their sessions were revoked' : 'Administrator updated', invalidate: [['users'], ['organizations']], onSuccess: onClose },
   );
   useEffect(() => {
     if (user) m.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
   const pwBad = password.length > 0 && password.length < MIN_PASSWORD;
+  const emailBad = !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail);
+  const invalid = pwBad || emailBad;
   return (
     <Modal
       open={!!user}
@@ -112,7 +125,7 @@ function EditUserDialog({ user, onClose }: { user: User | null; onClose: () => v
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" busy={m.isPending} disabled={pwBad} onClick={() => m.mutate(undefined)}>
+          <Button variant="primary" busy={m.isPending} disabled={invalid} onClick={() => m.mutate(undefined)}>
             Save
           </Button>
         </>
@@ -122,9 +135,19 @@ function EditUserDialog({ user, onClose }: { user: User | null; onClose: () => v
         className="stack"
         onSubmit={(e) => {
           e.preventDefault();
-          if (!pwBad) m.mutate(undefined);
+          if (!invalid) m.mutate(undefined);
         }}
       >
+        <Field
+          label="Email (sign-in name)"
+          hint={emailChanged ? (user?.id === me?.id ? 'You will sign in with the new email from now on.' : 'They will be signed out and must sign in with the new email.') : undefined}
+          error={emailBad && email.trim() ? 'Enter a valid email address' : null}
+        >
+          <div className="input-with-action">
+            <input type="email" autoComplete="off" spellCheck={false} value={email} onChange={(e) => setEmail(e.target.value)} maxLength={254} />
+            <CopyButton value={email.trim()} />
+          </div>
+        </Field>
         <Field label="Name">
           <input value={name} onChange={(e) => setName(e.target.value)} maxLength={200} />
         </Field>

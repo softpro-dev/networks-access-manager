@@ -37,6 +37,7 @@ export const createUserBody = z
 
 export const updateUserBody = z
   .object({
+    email: z.string().trim().toLowerCase().email().max(254).optional(),
     name: z.string().trim().min(1).max(200).nullable().optional(),
     status: z.enum(['ACTIVE', 'DISABLED']).optional(),
     password: password.optional(),
@@ -113,6 +114,13 @@ export async function updateUser(ctx: AppContext, p: AdminPrincipal, id: string,
   if (!u) throw notFound('User not found');
   if (u.id === p.userId && body.status === 'DISABLED') throw new AppError(400, 'VALIDATION_ERROR', 'You cannot disable your own account');
   const data: Prisma.UserUpdateInput = {};
+  // The email is the sign-in name: changing it signs the user out everywhere (except yourself).
+  const emailChanged = body.email !== undefined && body.email !== u.email;
+  if (emailChanged) {
+    const taken = await ctx.prisma.user.findUnique({ where: { email: body.email } });
+    if (taken) throw conflict('EMAIL_IN_USE', 'A user with this email already exists');
+    data.email = body.email;
+  }
   if (body.name !== undefined) data.name = body.name;
   if (body.status) data.status = body.status;
   if (body.password) {
@@ -122,7 +130,7 @@ export async function updateUser(ctx: AppContext, p: AdminPrincipal, id: string,
   }
   const updated = await ctx.prisma.$transaction(async (tx) => {
     const r = await tx.user.update({ where: { id }, data, include: { organization: true } });
-    if (body.status === 'DISABLED' || body.password) {
+    if (body.status === 'DISABLED' || body.password || (emailChanged && id !== p.userId)) {
       await tx.session.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } });
     }
     return r;
@@ -134,7 +142,12 @@ export async function updateUser(ctx: AppContext, p: AdminPrincipal, id: string,
     action: AuditAction.ADMIN_UPDATED,
     targetType: 'User',
     targetId: id,
-    metadata: { changed: Object.keys(body).filter((k) => k !== 'password'), password_changed: Boolean(body.password), status: body.status },
+    metadata: {
+      changed: Object.keys(body).filter((k) => k !== 'password' && (k !== 'email' || emailChanged)),
+      password_changed: Boolean(body.password),
+      status: body.status,
+      ...(emailChanged ? { email_from: u.email, email_to: body.email } : {}),
+    },
     ip,
   });
   return serializeUser(updated);
