@@ -78,9 +78,12 @@ function OrganizationsInner() {
                         {o.status === 'ACTIVE' ? 'Disable' : 'Enable'}
                       </Button>
                       {canDelete && (
-                        <Button size="sm" variant="danger" onClick={() => setDeleting(o)}>
-                          Delete
-                        </Button>
+                        // Only a disabled organization can be deleted (its admins and services are locked out first).
+                        <span title={o.status === 'ACTIVE' ? 'Disable the organization first, then it can be deleted' : `Delete ${o.code} and its administrators`}>
+                          <Button size="sm" variant="danger" disabled={o.status === 'ACTIVE'} onClick={() => setDeleting(o)}>
+                            Delete
+                          </Button>
+                        </span>
                       )}
                     </div>
                   </td>

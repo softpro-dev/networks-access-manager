@@ -124,11 +124,18 @@ describeDb('computers, login links, organization delete, analytics', () => {
     await a('POST', '/api/devices', { mac_address: '00:1A:2B:3C:4D:5E', title: 'PC' });
     await a('POST', '/api/policies', { name: 'P', content: { blocked_domains: ['x.com'] }, publish: true });
     expect((await a('DELETE', `/api/organizations/${orgA}?confirm=INST-001`)).statusCode).toBe(403);
+    // An active organization cannot be deleted: disable it first.
+    const active = await as(superT)('DELETE', `/api/organizations/${orgA}?confirm=INST-001`);
+    expect(active.statusCode).toBe(409);
+    expect(active.json().error.code).toBe('ORGANIZATION_ACTIVE');
+    expect((await as(superT)('PATCH', `/api/organizations/${orgA}`, { status: 'DISABLED' })).statusCode).toBe(200);
     expect((await as(superT)('DELETE', `/api/organizations/${orgA}?confirm=WRONG`)).statusCode).toBe(400);
 
     const d = await as(superT)('DELETE', `/api/organizations/${orgA}?confirm=INST-001`);
     expect(d.statusCode, d.body).toBe(200);
     expect(d.json()).toEqual({ devices: 1, policies: 1, users: 1 });
+    expect(await h.prisma.user.count({ where: { organizationId: orgA } })).toBe(0); // its admin is gone too
+    expect(await h.prisma.session.count({ where: { user: { organizationId: orgA } } })).toBe(0);
     expect(await h.prisma.organization.findUnique({ where: { id: orgA } })).toBeNull();
     expect(await h.prisma.organization.findUnique({ where: { id: orgB } })).not.toBeNull();
     const deleted = await h.prisma.auditLog.findFirstOrThrow({ where: { action: 'ORGANIZATION_DELETED' } });

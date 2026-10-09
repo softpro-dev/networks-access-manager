@@ -4,6 +4,7 @@ import type { AppContext } from '../../types.js';
 import type { AdminPrincipal } from '../../domain/rbac.js';
 import { assertOrgAccess, isSuperAdmin, requireSuperAdmin } from '../../domain/rbac.js';
 import { AuditAction, writeAudit } from '../../services/audit.js';
+import { agentEvents } from '../../services/agentEvents.js';
 import { openSecret, randomSecret, sealSecret, sha256Hex } from '../../utils/crypto.js';
 import { generateAccessToken } from '../../domain/deviceToken.js';
 import { hashPassword, MIN_PASSWORD_LENGTH } from '../../services/password.js';
@@ -228,14 +229,16 @@ export async function createLoginLink(ctx: AppContext, p: AdminPrincipal, id: st
 export const deleteOrgQuery = z.object({ confirm: z.string().max(64) });
 
 /**
- * Permanently delete an organization and everything in it. SUPER_ADMIN only, only when
- * ALLOW_ORGANIZATION_DELETE is on (default: outside production), and the caller must repeat the
- * organization code. Audit history is kept (detached from the organization).
+ * Permanently delete an organization and everything in it, including its organization admins.
+ * SUPER_ADMIN only; the organization must be **disabled** first (so its admins and services are
+ * already locked out), and the caller must repeat the organization code. ALLOW_ORGANIZATION_DELETE=false
+ * switches deletion off for the whole server. Audit history is kept (detached from the organization).
  */
 export async function deleteOrg(ctx: AppContext, p: AdminPrincipal, id: string, confirm: string, ip: string) {
   requireSuperAdmin(p);
   if (!ctx.config.allowOrganizationDelete) throw forbidden('ORGANIZATION_DELETE_DISABLED', 'Deleting organizations is disabled on this server');
   const org = await loadOrg(ctx, p, id);
+  if (org.status === 'ACTIVE') throw conflict('ORGANIZATION_ACTIVE', 'Disable the organization before deleting it');
   if (confirm !== org.code) throw badRequest('Confirmation does not match the organization code', [{ path: 'confirm', message: `Type ${org.code} to confirm` }]);
 
   const counts = await ctx.prisma.$transaction(async (tx) => {
@@ -262,5 +265,7 @@ export async function deleteOrg(ctx: AppContext, p: AdminPrincipal, id: string, 
     metadata: { code: org.code, name: org.name, ...counts },
     ip,
   });
+  // The audit entry is detached from the organization, so close its live service streams here.
+  agentEvents.disconnectOrg(org.id);
   return counts;
 }

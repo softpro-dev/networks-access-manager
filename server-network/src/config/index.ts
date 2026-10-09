@@ -127,7 +127,8 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     loginLockoutMinutes: e.LOGIN_LOCKOUT_MINUTES,
     rateLimitEnabled: e.RATE_LIMIT_ENABLED,
     webPublicUrl: e.WEB_PUBLIC_URL,
-    allowOrganizationDelete: e.ALLOW_ORGANIZATION_DELETE ?? e.NODE_ENV !== 'production',
+    // On by default: an organization must be disabled and its code typed before it can be deleted.
+    allowOrganizationDelete: e.ALLOW_ORGANIZATION_DELETE ?? true,
     loginLinkTtlMinutes: e.LOGIN_LINK_TTL_MINUTES,
     tokenEncryptionKey: e.TOKEN_ENCRYPTION_KEY ?? e.JWT_SECRET,
   };

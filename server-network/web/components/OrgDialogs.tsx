@@ -471,7 +471,7 @@ export function OrgPasswordDialog({ org, onClose }: { org: Organization | null; 
   );
 }
 
-/** Development tool: permanently delete an organization; the admin must type its code. */
+/** Permanently delete a disabled organization and its administrators; the super admin must type its code. */
 export function DeleteOrgDialog({ org, onClose }: { org: Organization | null; onClose: () => void }) {
   const [typed, setTyped] = useState('');
   const qc = useQueryClient();
@@ -504,7 +504,7 @@ export function DeleteOrgDialog({ org, onClose }: { org: Organization | null; on
       onConfirm={() => matches && m.mutate(undefined)}
     >
       <Alert tone="error" title="This cannot be undone">
-        Deletes <strong>{org?.name}</strong> with all its computers, credentials, groups, restrictions (with every version), assignments and administrators. Audit history is kept.
+        Deletes <strong>{org?.name}</strong> and <strong>all its organization admins</strong> (they can no longer sign in), together with its computers, groups, restrictions (with every version) and assignments. Services using its access token stop receiving updates. Audit history is kept.
       </Alert>
       <Field label={`Type ${org?.code ?? ''} to confirm`} error={typed && !matches ? 'Does not match the organization code' : null}>
         <input
