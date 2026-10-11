@@ -52,6 +52,8 @@ Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AdminExeName}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AdminExeName}"
 
 [Run]
+; Refresh the shell icon cache so taskbar pins / shortcuts made by an older build show the current icon.
+Filename: "{sys}\ie4uinit.exe"; Parameters: "-show"; Flags: runhidden skipifdoesntexist
 Filename: "{app}\{#AdminExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]

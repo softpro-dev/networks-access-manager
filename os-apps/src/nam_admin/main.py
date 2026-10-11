@@ -42,12 +42,12 @@ def run(server_url: str | None) -> int:
     if reachable:
         # Show a loading page at once, scan the LAN in pywebview's worker thread, then open the
         # console with ?connected_devices=... (see network_scan).
-        window = webview.create_window(WINDOW_TITLE, html=loading_page_html())
+        window = webview.create_window(WINDOW_TITLE, html=loading_page_html(), maximized=True)
         _install_about_menu(webview, server_url)
         webview.start(_open_console, (window, server_url))
     else:
         detail = "" if server_url else "ADMIN_SERVER is not set in agent.env or the environment."
-        webview.create_window(WINDOW_TITLE, html=error_page_html(server_url, detail))
+        webview.create_window(WINDOW_TITLE, html=error_page_html(server_url, detail), maximized=True)
         _install_about_menu(webview, server_url)
         webview.start()
     return 0

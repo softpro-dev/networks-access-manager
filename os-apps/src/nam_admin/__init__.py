@@ -10,5 +10,5 @@ Windows-only modules and packages independently from the service.
 __version__ = "1.0.0"
 ADMIN_VERSION = __version__
 
-APP_NAME = "SoftProIt Network Admin"
-WINDOW_TITLE = "SoftProIt Network Admin"
+APP_NAME = "SOFT PRO IT Network Admin"
+WINDOW_TITLE = "SOFT PRO IT Network Admin"
