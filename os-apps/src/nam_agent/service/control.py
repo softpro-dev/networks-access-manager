@@ -46,14 +46,16 @@ def install() -> None:  # pragma: no cover - Windows only
     import win32service
     import win32serviceutil
 
-    win32serviceutil.InstallService(
-        None,
-        SERVICE_NAME,
-        SERVICE_DISPLAY_NAME,
+    kwargs = dict(
         startType=win32service.SERVICE_AUTO_START,
         exeName=sys.executable,  # quoted by pywin32 -> no unquoted-path issue
         description=SERVICE_DESCRIPTION,
     )
+    if query_state() == "NOT_INSTALLED":
+        win32serviceutil.InstallService(None, SERVICE_NAME, SERVICE_DISPLAY_NAME, **kwargs)
+    else:
+        # Setup upgrade: re-point the existing service (removing it would need the uninstall password).
+        win32serviceutil.ChangeServiceConfig(None, SERVICE_NAME, displayName=SERVICE_DISPLAY_NAME, **kwargs)
     harden()
 
 
@@ -65,12 +67,13 @@ def harden() -> None:  # pragma: no cover - Windows only
     _sc("sdset", SERVICE_NAME, SERVICE_SDDL)
 
 
-def uninstall() -> None:  # pragma: no cover - Windows only
+def uninstall(password: str | None = None) -> None:  # pragma: no cover - Windows only
+    """Stop (lifting the restrictions) and remove. The caller has checked the password."""
     _require_windows()
     import win32serviceutil
 
     try:
-        stop()
+        stop(password)
     except Exception:
         pass
     win32serviceutil.RemoveService(SERVICE_NAME)
@@ -84,11 +87,40 @@ def start(wait_seconds: float = 30.0) -> str:  # pragma: no cover - Windows only
     return _wait_for(4, wait_seconds)
 
 
-def stop(wait_seconds: float = 30.0) -> str:  # pragma: no cover - Windows only
+def stop(password: str | None = None, wait_seconds: float = 30.0) -> str:  # pragma: no cover - Windows only
+    """Stop on purpose: the service removes every restriction. A password-protected service
+    refuses the normal SCM stop, so it gets the checked password through the one-time permit
+    file and CONTROL_RELEASE_STOP instead (see `protection`)."""
     _require_windows()
     import win32serviceutil
 
-    win32serviceutil.StopService(SERVICE_NAME)
+    from ..config.paths import resolve_paths
+    from . import protection
+
+    if query_state() in ("STOPPED", "NOT_INSTALLED"):
+        return query_state()
+    paths = resolve_paths()
+    if not protection.is_protected(paths):
+        win32serviceutil.StopService(SERVICE_NAME)
+        return _wait_for(1, wait_seconds)
+    protection.write_stop_permit(paths, password or "")
+    try:
+        win32serviceutil.ControlService(SERVICE_NAME, protection.CONTROL_RELEASE_STOP)
+        return _wait_for(1, wait_seconds)
+    finally:
+        protection.clear_stop_permit(paths)
+
+
+def stop_keep_restrictions(wait_seconds: float = 30.0) -> str:  # pragma: no cover - Windows only
+    """Setup upgrade: stop without lifting the restrictions (needs no password)."""
+    _require_windows()
+    import win32serviceutil
+
+    from . import protection
+
+    if query_state() in ("STOPPED", "NOT_INSTALLED"):
+        return query_state()
+    win32serviceutil.ControlService(SERVICE_NAME, protection.CONTROL_KEEP_STOP)
     return _wait_for(1, wait_seconds)
 
 

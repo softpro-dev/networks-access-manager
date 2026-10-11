@@ -11,6 +11,10 @@
 ;
 ; Silent install: setup.exe /VERYSILENT
 ; Optional overrides: /SERVER=https://... /TOKENFILE=C:\secure\token.txt /CACHE=5
+;
+; Uninstall password (UNINSTALL_PASSWORD at build time; only a salted hash is baked in and
+; written to agent.env): Programs and Features > Uninstall asks for it, and the service refuses
+; the normal Stop (Services app). Silent uninstall: unins000.exe /VERYSILENT /PASSWORD=...
 
 #ifndef AppVersion
   #define AppVersion "1.0.0"
@@ -18,6 +22,9 @@
 #include "..\build\installer-config-service.iss"
 #ifndef CfgServer
   #error build\installer-config-service.iss must define CfgServer, CfgToken and CfgCache (run scripts\build.ps1)
+#endif
+#ifndef CfgUninstallHash
+  #error build\installer-config-service.iss must define CfgUninstallHash (UNINSTALL_PASSWORD; run scripts\build.ps1)
 #endif
 #ifndef CfgTestPoll
   #define CfgTestPoll ""
@@ -68,8 +75,9 @@ Type: filesandordirs; Name: "{app}\admin"
 Source: "..\dist\SoftProIt.network.conducted\*"; DestDir: "{app}\conducted"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [UninstallRun]
-Filename: "{app}\conducted\{#SvcExeName}"; Parameters: "stop"; Flags: runhidden waituntilterminated; RunOnceId: "StopService"
-Filename: "{app}\conducted\{#SvcExeName}"; Parameters: "uninstall"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveService"
+; Stops the service (lifting every restriction) and removes it. The password checked in
+; InitializeUninstall reaches it through NAM_UNINSTALL_PASSWORD.
+Filename: "{app}\conducted\{#SvcExeName}"; Parameters: "uninstall --no-prompt"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveService"
 
 ; ProgramData (policy cache, logs, config) is intentionally kept on uninstall so a
 ; reinstall keeps state. Delete C:\ProgramData\OrganizationNetworkAgent to wipe.
@@ -158,6 +166,10 @@ end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
+  { Upgrade: control 201 stops a password-protected service but keeps the restrictions on
+    (it refuses the normal stop); older versions without the password stop with sc stop. }
+  RunTool(ExpandConstant('{sys}\sc.exe'), 'control {#ServiceName} 201');
+  Sleep(2000);
   RunTool(ExpandConstant('{sys}\sc.exe'), 'stop {#ServiceName}');
   Sleep(3000);
   Result := '';
@@ -191,6 +203,8 @@ begin
   Content := Content + 'ADMIN_SERVER="' + Url + '"' + #13#10;
   Content := Content + 'ACCESS_TOKE="' + TokenValue() + '"' + #13#10;
   Content := Content + 'CACHE_EXPIRATION_TIME_IN_MINUTE="' + Cache + '"' + #13#10;
+  { Stopping / uninstalling the service needs the password this hash was made from. }
+  Content := Content + 'UNINSTALL_PASSWORD_HASH="{#CfgUninstallHash}"' + #13#10;
   { Testing only: seconds-level polling, baked in from os-apps\.env when set there. }
   if '{#CfgTestPoll}' <> '' then
     Content := Content + 'NAM_TEST_POLL_SECONDS="{#CfgTestPoll}"' + #13#10;
@@ -209,8 +223,7 @@ begin
   SecureDirectories();
   WriteConfig();
 
-  { Register the service (idempotent on upgrade: remove first). `install` sets auto start. }
-  RunTool(SvcExe(), 'uninstall');
+  { Register the service (an upgrade re-points the existing one). `install` sets auto start. }
   Code := RunTool(SvcExe(), 'install');
   if Code <> 0 then
   begin
@@ -229,4 +242,110 @@ begin
   if Code <> 0 then
     MsgBox('The service did not reach the RUNNING state (exit code ' + IntToStr(Code) + '). ' +
       'Check C:\ProgramData\OrganizationNetworkAgent\logs\agent.log and the Application event log.', mbError, MB_OK);
+end;
+
+{ ---- Uninstall password ---------------------------------------------------------------- }
+
+function SetEnvironmentVariable(lpName, lpValue: String): BOOL;
+  external 'SetEnvironmentVariableW@kernel32.dll stdcall';
+
+{ Ask the installed service whether Password is right (exit 0; also when none is set).
+  The password goes through the environment, never the command line, and stays set for
+  the UninstallRun entry, so `uninstall` can stop the service with it. }
+function PasswordAccepted(const Password: String): Boolean;
+var
+  Code: Integer;
+begin
+  SetEnvironmentVariable('NAM_UNINSTALL_PASSWORD', Password);
+  if not FileExists(SvcExe()) then
+  begin
+    Log('service executable missing; uninstall allowed');
+    Result := True;
+    Exit;
+  end;
+  if not Exec(SvcExe(), 'check-password', '', SW_HIDE, ewWaitUntilTerminated, Code) then
+    Code := -1;
+  Log('check-password -> ' + IntToStr(Code));
+  Result := Code = 0;
+end;
+
+function AskPassword(var Password: String): Boolean;
+var
+  Form: TSetupForm;
+  Info: TNewStaticText;
+  Edit: TPasswordEdit;
+  OkButton, CancelButton: TNewButton;
+begin
+  Form := CreateCustomForm(ScaleX(380), ScaleY(140), False, False);
+  try
+    Form.Caption := 'Uninstall {#AppName}';
+    Form.Position := poScreenCenter;
+
+    Info := TNewStaticText.Create(Form);
+    Info.Parent := Form;
+    Info.Left := ScaleX(16);
+    Info.Top := ScaleY(16);
+    Info.Width := Form.ClientWidth - ScaleX(32);
+    Info.Height := ScaleY(32);
+    Info.AutoSize := False;
+    Info.WordWrap := True;
+    Info.Caption := 'Enter the uninstall password. Removing the service lifts every network restriction on this computer.';
+
+    Edit := TPasswordEdit.Create(Form);
+    Edit.Parent := Form;
+    Edit.Left := ScaleX(16);
+    Edit.Top := ScaleY(58);
+    Edit.Width := Form.ClientWidth - ScaleX(32);
+
+    OkButton := TNewButton.Create(Form);
+    OkButton.Parent := Form;
+    OkButton.Caption := 'OK';
+    OkButton.Width := ScaleX(80);
+    OkButton.Height := ScaleY(26);
+    OkButton.Left := Form.ClientWidth - ScaleX(16 + 80 + 8 + 80);
+    OkButton.Top := Form.ClientHeight - ScaleY(16 + 26);
+    OkButton.ModalResult := mrOk;
+    OkButton.Default := True;
+
+    CancelButton := TNewButton.Create(Form);
+    CancelButton.Parent := Form;
+    CancelButton.Caption := 'Cancel';
+    CancelButton.Width := ScaleX(80);
+    CancelButton.Height := ScaleY(26);
+    CancelButton.Left := Form.ClientWidth - ScaleX(16 + 80);
+    CancelButton.Top := OkButton.Top;
+    CancelButton.ModalResult := mrCancel;
+    CancelButton.Cancel := True;
+
+    Form.ActiveControl := Edit;
+    Result := Form.ShowModal() = mrOk;
+    Password := Edit.Text;
+  finally
+    Form.Free();
+  end;
+end;
+
+function InitializeUninstall(): Boolean;
+var
+  Password: String;
+  Attempt: Integer;
+begin
+  { No password configured (older install): nothing to ask. }
+  Result := PasswordAccepted('');
+  if Result then Exit;
+
+  if UninstallSilent() then
+  begin
+    Result := PasswordAccepted(ExpandConstant('{param:PASSWORD|}'));
+    if not Result then Log('uninstall cancelled: missing or wrong /PASSWORD=');
+    Exit;
+  end;
+
+  for Attempt := 1 to 3 do
+  begin
+    if not AskPassword(Password) then Exit;
+    Result := PasswordAccepted(Password);
+    if Result then Exit;
+    MsgBox('Wrong uninstall password.', mbError, MB_OK);
+  end;
 end;

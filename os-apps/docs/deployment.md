@@ -86,3 +86,21 @@ After changing configuration: `stop` then `start` the service.
 Apps & Features → uninstall (requires admin): stops and removes the service and
 program files. `C:\ProgramData\OrganizationNetworkAgent` is kept so a reinstall keeps
 the device UUID; delete it to wipe the device completely.
+
+### Uninstall password
+
+Service installers are built with `UNINSTALL_PASSWORD` from the env file (required; only a
+salted hash goes into the installer and into `agent.env` as `UNINSTALL_PASSWORD_HASH`).
+On a computer installed with it:
+
+- Programs and Features → Uninstall asks for the password (3 tries); a wrong one cancels.
+- Silent uninstall: `"C:\Program Files\SoftProIt Network\unins000.exe" /VERYSILENT /PASSWORD=...`
+- The Services app cannot stop the service (Stop is greyed out). From an elevated prompt:
+  `SoftProIt.network.conducted.exe stop` (or `uninstall`) prompts for the password, or reads
+  it from `NAM_UNINSTALL_PASSWORD` / `--password-stdin`. Exit code 6 = wrong password.
+- `stop --keep-restrictions` stops without lifting the restrictions and needs no password
+  (setup upgrades use it).
+- Upgrading with a new installer keeps working; the new build's password then applies.
+
+This stops casual removal, not a determined local administrator (who can, for example,
+delete the service with `sc delete`). Keep users off the Administrators group.

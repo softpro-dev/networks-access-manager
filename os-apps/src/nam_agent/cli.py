@@ -3,8 +3,9 @@
   (no arguments)  host the Windows Service (launched by the SCM)
   configure       set organization / server / registration token (Administrator)
   install         register the Windows Service (auto start, recovery, DACL)
-  uninstall       stop and remove the service
-  start | stop    control the service
+  uninstall       stop and remove the service (uninstall password, when set)
+  start | stop    control the service (stop: uninstall password, when set)
+  check-password  exit 0 when the uninstall password is right (or none is set)
   status          service state + local agent state
   run             run the agent in the foreground (debugging)
 """
@@ -95,19 +96,69 @@ def _remove_restrictions() -> None:
         print(f"warning: could not remove every restriction: {e}", file=sys.stderr)
 
 
-def cmd_service(action: str) -> int:
+WRONG_PASSWORD_EXIT = 6
+
+
+def _read_password(args: argparse.Namespace, *, prompt: bool = True) -> str | None:
+    """The uninstall password: NAM_UNINSTALL_PASSWORD (the uninstaller sets it), --password-stdin,
+    else a prompt when interactive and `prompt`. The uninstaller runs us in a hidden console, where
+    a prompt would wait forever: it cannot pass an empty variable (that deletes it), so the commands
+    it runs must not prompt."""
+    import os
+
+    from .service.protection import PASSWORD_ENV
+
+    if PASSWORD_ENV in os.environ:
+        return os.environ[PASSWORD_ENV]
+    if getattr(args, "password_stdin", False):
+        return sys.stdin.readline().rstrip("\r\n")
+    if prompt and not getattr(args, "no_prompt", False) and sys.stdin is not None and sys.stdin.isatty():
+        return getpass.getpass("Uninstall password: ")
+    return None
+
+
+def _password_ok(args: argparse.Namespace, *, prompt: bool = True) -> tuple[bool, str | None]:
+    """(allowed, password). Allowed when no uninstall password is configured or it matches."""
+    from .config.paths import resolve_paths
+    from .service import protection
+
+    paths = resolve_paths()
+    if not protection.is_protected(paths):
+        return True, None
+    password = _read_password(args, prompt=prompt)
+    return protection.check_password(paths, password), password
+
+
+def cmd_check_password(args: argparse.Namespace) -> int:
+    if (rc := _require_admin()) is not None:
+        return rc
+    ok, _ = _password_ok(args, prompt=False)  # run hidden by the uninstaller: never prompt
+    if not ok:
+        return _fail("wrong uninstall password", WRONG_PASSWORD_EXIT)
+    print("OK")
+    return 0
+
+
+def cmd_service(action: str, args: argparse.Namespace | None = None) -> int:
     if (rc := _require_admin()) is not None:
         return rc
     if not (IS_WINDOWS or IS_MACOS):
         return _fail("service management is only available on Windows and macOS; use `run` for development")
     svc = _service_module()
+    args = args or argparse.Namespace()
+    password = None
+    keep = getattr(args, "keep_restrictions", False)
+    if action == "uninstall" or (action == "stop" and not keep):
+        ok, password = _password_ok(args)
+        if not ok:
+            return _fail("wrong uninstall password: the service was not stopped", WRONG_PASSWORD_EXIT)
 
     try:
         if action == "install":
             svc.install()
             print(f"{SERVICE_NAME} installed (automatic start).")
         elif action == "uninstall":
-            svc.uninstall()  # stopping the service already lifts the restrictions...
+            svc.uninstall(password) if IS_WINDOWS else svc.uninstall()  # stopping already lifts the restrictions...
             _remove_restrictions()  # ...and this also covers a service that was killed or never ran
             print(f"{SERVICE_NAME} removed.")
         elif action == "start":
@@ -115,7 +166,10 @@ def cmd_service(action: str) -> int:
             print(state)
             return 0 if state == "RUNNING" else 3
         elif action == "stop":
-            state = svc.stop()
+            if keep and IS_WINDOWS:
+                state = svc.stop_keep_restrictions()
+            else:
+                state = svc.stop(password) if IS_WINDOWS else svc.stop()
             print(state)
             return 0 if state in ("STOPPED", "NOT_INSTALLED") else 3
     except svc.ServiceControlError as e:
@@ -182,8 +236,16 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--ca-bundle", help="PEM CA bundle for a private PKI")
     c.add_argument("--no-verify-tls", action="store_true", help="disable TLS verification (NOT for production)")
     c.add_argument("--reset-enrollment", action="store_true", help="discard the device credential and enroll again")
+    parsers = {}
     for name in ("install", "uninstall", "start", "stop"):
-        sub.add_parser(name, help=f"{name} the background service (Windows Service / macOS launchd)")
+        parsers[name] = sub.add_parser(name, help=f"{name} the background service (Windows Service / macOS launchd)")
+    k = sub.add_parser("check-password", help="check the uninstall password (exit 0 = right)")
+    for q in (parsers["uninstall"], parsers["stop"], k):
+        q.add_argument("--password-stdin", action="store_true", help="read the uninstall password from stdin")
+        q.add_argument("--no-prompt", action="store_true", help="never ask for the password (unattended runs)")
+    parsers["stop"].add_argument(
+        "--keep-restrictions", action="store_true", help="setup upgrades: stop without lifting the restrictions (no password)"
+    )
     sub.add_parser("status", help="show service and agent state")
     sub.add_parser("run", help="run the agent in the foreground (debug)")
     return p
@@ -203,7 +265,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "configure":
         return cmd_configure(args)
     if args.command in ("install", "uninstall", "start", "stop"):
-        return cmd_service(args.command)
+        return cmd_service(args.command, args)
+    if args.command == "check-password":
+        return cmd_check_password(args)
     if args.command == "status":
         return cmd_status(args)
     if args.command == "run":

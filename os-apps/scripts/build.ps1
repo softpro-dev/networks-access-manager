@@ -147,7 +147,23 @@ if ($Installer) {
     if ($CfgCache -notmatch '^\d+$' -or [int]$CfgCache -lt 1 -or [int]$CfgCache -gt 1440) {
       throw "CACHE_EXPIRATION_TIME_IN_MINUTE in $EnvLabel must be 1-1440 (got '$CfgCache')"
     }
+    $UninstallPassword = Get-EnvValue "UNINSTALL_PASSWORD"
+    if ($UninstallPassword.Length -lt 4 -or $UninstallPassword.Length -gt 128) {
+      throw "UNINSTALL_PASSWORD in $EnvLabel must be 4-128 characters (stopping/uninstalling the service asks for it)"
+    }
   }
+}
+
+# Salted PBKDF2-SHA256 of the uninstall password, in the format nam_agent.service.protection
+# verifies (pbkdf2-sha256:<iterations>:<salt hex>:<hash hex>). The password itself is never baked in.
+function Get-UninstallPasswordHash([string]$Password) {
+  $iterations = 200000
+  $salt = New-Object byte[] 16
+  [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($salt)
+  $kdf = New-Object Security.Cryptography.Rfc2898DeriveBytes($Password, $salt, $iterations, [Security.Cryptography.HashAlgorithmName]::SHA256)
+  try { $hash = $kdf.GetBytes(32) } finally { $kdf.Dispose() }
+  $hex = { param($b) -join ($b | ForEach-Object { $_.ToString("x2") }) }
+  return "pbkdf2-sha256:${iterations}:$(& $hex $salt):$(& $hex $hash)"
 }
 
 $apps = @(
@@ -240,7 +256,9 @@ if ($Installer) {
       "#define CfgCode `"$CfgCode`""
     )
     Set-Content -Encoding UTF8 $adminCfg $shared
-    Set-Content -Encoding UTF8 $serviceCfg ($shared + "#define CfgToken `"$CfgToken`"" + "#define CfgTestPoll `"$CfgTestPoll`"")
+    $serviceDefines = @("#define CfgToken `"$CfgToken`"", "#define CfgTestPoll `"$CfgTestPoll`"")
+    if ($Target -ne "Admin") { $serviceDefines += "#define CfgUninstallHash `"$(Get-UninstallPasswordHash $UninstallPassword)`"" }
+    Set-Content -Encoding UTF8 $serviceCfg ($shared + $serviceDefines)
     $built = @()
     foreach ($app in $apps) {
       $base = "SoftProIt-Network-$($app.Name)-$BuildVersion-setup"
